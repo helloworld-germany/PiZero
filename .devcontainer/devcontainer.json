@@ -1,0 +1,15 @@
+{
+  "name": "PiZero",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "customizations": {
+    "codespaces": {
+      "repositories": {
+        "helloworld-germany/vidaugment": {
+          "permissions": {
+            "contents": "read"
+          }
+        }
+      }
+    }
+  }
+}
