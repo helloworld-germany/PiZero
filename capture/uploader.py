@@ -81,3 +81,19 @@ def finish_session(master_session_id: str) -> dict:
     payload = resp.json()
     log.info("Session %s finished", master_session_id)
     return payload
+
+
+def connect_session(master_session_id: str) -> None:
+    """POST /api/masterSession/<id>/connect — fire-and-forget device connect."""
+    if not config.API_BASE_URL:
+        return
+
+    url = f"{config.API_BASE_URL}/api/masterSession/{master_session_id}/connect"
+    try:
+        resp = requests.post(url, timeout=5)
+        if resp.ok:
+            log.info("Connected to session %s", master_session_id)
+        else:
+            log.warning("Connect call returned %d", resp.status_code)
+    except Exception as exc:
+        log.warning("Connect call failed (non-blocking): %s", exc)

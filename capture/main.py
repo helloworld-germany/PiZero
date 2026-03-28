@@ -21,7 +21,7 @@ from . import led
 from .camera import create_camera, configure_qr_mode, configure_capture_mode
 from .qr_scanner import run_scanner
 from .recorder import record
-from .uploader import upload_recording, finish_session
+from .uploader import upload_recording, finish_session, connect_session
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
@@ -91,6 +91,7 @@ def _run_cycle(picam2):
         return
 
     log.info("Session acquired: %s", master_session_id)
+    connect_session(master_session_id)
     picam2.stop()
 
     # ── CAPTURE ────────────────────────────────────────────────────
