@@ -49,7 +49,7 @@ def record(picam2) -> Path:
     ts = int(time.time() * 1000)
     video_h264 = cap_dir / f"capture-{ts}.h264"
     audio_wav = cap_dir / f"capture-{ts}.wav"
-    output_file = cap_dir / f"capture-{ts}.webm"
+    output_file = cap_dir / f"capture-{ts}.mp4"
 
     duration = config.RECORD_DURATION_S
     log.info(
@@ -113,29 +113,27 @@ def record(picam2) -> Path:
             log.info("Audio capture done (%s)", audio_wav)
 
     # -----------------------------------------------------------------
-    # 4.  Mux into WebM (VP8 + Opus) – matches browser MediaRecorder output
+    # 4.  Mux into MP4 (stream-copy, no re-encode – fast on Pi Zero)
     # -----------------------------------------------------------------
     if has_audio and audio_wav.exists():
         mux_cmd = [
             "ffmpeg", "-y",
             "-i", str(video_h264),
             "-i", str(audio_wav),
-            "-c:v", "libvpx",
-            "-crf", "10",
-            "-b:v", "1500k",
-            "-c:a", "libopus",
+            "-c:v", "copy",
+            "-c:a", "aac",
             "-b:a", "64k",
             "-shortest",
+            "-movflags", "+faststart",
             str(output_file),
         ]
     else:
         mux_cmd = [
             "ffmpeg", "-y",
             "-i", str(video_h264),
-            "-c:v", "libvpx",
-            "-crf", "10",
-            "-b:v", "1500k",
+            "-c:v", "copy",
             "-an",
+            "-movflags", "+faststart",
             str(output_file),
         ]
     log.debug("Mux cmd: %s", mux_cmd)

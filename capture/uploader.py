@@ -31,7 +31,7 @@ def upload_recording(master_session_id: str, file_path: Path) -> dict:
 
     url = f"{config.API_BASE_URL}/api/uploadVideo"
     params = {"masterSessionId": master_session_id}
-    mime = "video/webm"
+    mime = "video/mp4"
     filename = file_path.name
 
     log.info(
