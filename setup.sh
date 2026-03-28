@@ -53,11 +53,11 @@ fi
 
 # ── Camera check ──────────────────────────────────────────────────
 echo "[4/5] Checking camera …"
-if command -v libcamera-hello >/dev/null 2>&1; then
+if command -v rpicam-hello >/dev/null 2>&1; then
     echo "  Running quick camera test (2s) …"
-    timeout 3 libcamera-hello -t 2000 --nopreview 2>/dev/null && echo "  ✓ Camera OK" || echo "  ⚠ Camera test failed – check connection"
+    timeout 3 rpicam-hello -t 2000 --nopreview 2>/dev/null && echo "  ✓ Camera OK" || echo "  ⚠ Camera test failed – check connection"
 else
-    echo "  ⚠ libcamera-hello not found – is Pi Camera connected?"
+    echo "  ⚠ rpicam-hello not found – is Pi Camera connected?"
 fi
 
 # ── Audio check ───────────────────────────────────────────────────
