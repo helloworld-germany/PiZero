@@ -43,7 +43,13 @@ def extract_master_session_id(data: str) -> str | None:
 
 def scan_frame(frame):
     """Decode QR codes in a numpy frame and return a masterSessionId or None."""
-    results = pyzbar.decode(frame, symbols=[pyzbar.ZBarSymbol.QRCODE])
+    # Convert to grayscale for faster pyzbar decoding
+    if frame.ndim == 3:
+        # Fast luminance approximation: use green channel (best contrast)
+        gray = frame[:, :, 1]
+    else:
+        gray = frame
+    results = pyzbar.decode(gray, symbols=[pyzbar.ZBarSymbol.QRCODE])
     for result in results:
         data = result.data.decode("utf-8", errors="replace")
         session_id = extract_master_session_id(data)
@@ -64,11 +70,10 @@ def run_scanner(picam2, shutdown_check=None) -> str | None:
     should exit (used for prompt SIGTERM handling).
     """
     log.info(
-        "QR scanner active – looking for viewer QR code "
-        "(scan every %.1fs at %dx%d)",
-        config.QR_SCAN_INTERVAL_S,
+        "QR scanner active – looking for viewer QR code (%dx%d @ %d fps)",
         config.QR_SCAN_WIDTH,
         config.QR_SCAN_HEIGHT,
+        config.QR_SCAN_FPS,
     )
 
     while True:
@@ -78,4 +83,3 @@ def run_scanner(picam2, shutdown_check=None) -> str | None:
         session_id = scan_frame(frame)
         if session_id:
             return session_id
-        time.sleep(config.QR_SCAN_INTERVAL_S)

@@ -17,18 +17,15 @@ def create_camera():
 
 def configure_qr_mode(picam2):
     """
-    Configure the camera for low-power QR scanning:
-    low resolution, low frame rate.
+    Configure the camera for fast QR scanning:
+    small resolution, video stream, grayscale-friendly.
     """
-    from picamera2 import Picamera2  # type: ignore[import-untyped]
-    from libcamera import controls  # type: ignore[import-untyped]
-
-    cam_config = picam2.create_still_configuration(
+    cam_config = picam2.create_video_configuration(
         main={"size": (config.QR_SCAN_WIDTH, config.QR_SCAN_HEIGHT), "format": "RGB888"},
+        buffer_count=2,
     )
     picam2.configure(cam_config)
     picam2.start()
-    # Lower frame rate for power saving
     try:
         picam2.set_controls({
             "FrameRate": config.QR_SCAN_FPS,
