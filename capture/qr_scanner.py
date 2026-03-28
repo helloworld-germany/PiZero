@@ -53,12 +53,15 @@ def scan_frame(frame):
     return None
 
 
-def run_scanner(picam2) -> str:
+def run_scanner(picam2, shutdown_check=None) -> str | None:
     """
     Block until a QR code with a valid masterSessionId is found.
 
     *picam2* must already be configured and started in the low-res preview
-    mode.  Returns the masterSessionId string.
+    mode.  Returns the masterSessionId string, or None if shutdown requested.
+
+    *shutdown_check* is an optional callable returning True when the process
+    should exit (used for prompt SIGTERM handling).
     """
     log.info(
         "QR scanner active – looking for viewer QR code "
@@ -69,6 +72,8 @@ def run_scanner(picam2) -> str:
     )
 
     while True:
+        if shutdown_check and shutdown_check():
+            return None
         frame = picam2.capture_array("main")
         session_id = scan_frame(frame)
         if session_id:

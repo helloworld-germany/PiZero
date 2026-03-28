@@ -70,6 +70,8 @@ def main():
     try:
         while not _shutdown:
             _run_cycle(picam2)
+            if _shutdown:
+                break
     except KeyboardInterrupt:
         log.info("Interrupted")
     finally:
@@ -84,8 +86,8 @@ def _run_cycle(picam2):
     led.off()
     configure_qr_mode(picam2)
 
-    master_session_id = run_scanner(picam2)
-    if _shutdown:
+    master_session_id = run_scanner(picam2, shutdown_check=lambda: _shutdown)
+    if _shutdown or not master_session_id:
         return
 
     log.info("Session acquired: %s", master_session_id)
