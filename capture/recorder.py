@@ -17,6 +17,20 @@ from . import config
 log = logging.getLogger(__name__)
 
 
+def _has_audio_device() -> bool:
+    """Check whether any ALSA capture device is available."""
+    try:
+        result = subprocess.run(
+            ["arecord", "-l"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+        return b"card" in result.stdout
+    except Exception:
+        return False
+
+
 def _ensure_capture_dir() -> Path:
     config.CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
     return config.CAPTURE_DIR
@@ -48,23 +62,28 @@ def record(picam2) -> Path:
     )
 
     # -----------------------------------------------------------------
-    # 1.  Start audio recording (ffmpeg reading ALSA)
+    # 1.  Start audio recording (ffmpeg reading ALSA) – skip if no mic
     # -----------------------------------------------------------------
-    audio_cmd = [
-        "ffmpeg", "-y",
-        "-f", "alsa",
-        "-ac", "1",
-        "-ar", str(config.AUDIO_SAMPLE_RATE),
-        "-i", config.AUDIO_DEVICE,
-        "-t", str(duration),
-        str(audio_wav),
-    ]
-    log.debug("Audio cmd: %s", audio_cmd)
-    audio_proc = subprocess.Popen(
-        audio_cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-    )
+    audio_proc = None
+    has_audio = _has_audio_device()
+    if has_audio:
+        audio_cmd = [
+            "ffmpeg", "-y",
+            "-f", "alsa",
+            "-ac", "1",
+            "-ar", str(config.AUDIO_SAMPLE_RATE),
+            "-i", config.AUDIO_DEVICE,
+            "-t", str(duration),
+            str(audio_wav),
+        ]
+        log.debug("Audio cmd: %s", audio_cmd)
+        audio_proc = subprocess.Popen(
+            audio_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+    else:
+        log.warning("No audio capture device found – recording video only")
 
     # -----------------------------------------------------------------
     # 2.  Start video recording (picamera2 H.264 encoder)
@@ -84,28 +103,41 @@ def record(picam2) -> Path:
     # -----------------------------------------------------------------
     # 3.  Wait for audio to finish
     # -----------------------------------------------------------------
-    audio_proc.wait(timeout=duration + 10)
-    if audio_proc.returncode != 0:
-        stderr = audio_proc.stderr.read().decode(errors="replace")
-        log.warning("Audio capture returned %d: %s", audio_proc.returncode, stderr)
-    else:
-        log.info("Audio capture done (%s)", audio_wav)
+    if audio_proc is not None:
+        audio_proc.wait(timeout=duration + 10)
+        if audio_proc.returncode != 0:
+            stderr = audio_proc.stderr.read().decode(errors="replace")
+            log.warning("Audio capture returned %d: %s", audio_proc.returncode, stderr)
+            has_audio = False
+        else:
+            log.info("Audio capture done (%s)", audio_wav)
 
     # -----------------------------------------------------------------
     # 4.  Mux into WebM (VP8 + Opus) – matches browser MediaRecorder output
     # -----------------------------------------------------------------
-    mux_cmd = [
-        "ffmpeg", "-y",
-        "-i", str(video_h264),
-        "-i", str(audio_wav),
-        "-c:v", "libvpx",
-        "-crf", "10",
-        "-b:v", "1500k",
-        "-c:a", "libopus",
-        "-b:a", "64k",
-        "-shortest",
-        str(output_file),
-    ]
+    if has_audio and audio_wav.exists():
+        mux_cmd = [
+            "ffmpeg", "-y",
+            "-i", str(video_h264),
+            "-i", str(audio_wav),
+            "-c:v", "libvpx",
+            "-crf", "10",
+            "-b:v", "1500k",
+            "-c:a", "libopus",
+            "-b:a", "64k",
+            "-shortest",
+            str(output_file),
+        ]
+    else:
+        mux_cmd = [
+            "ffmpeg", "-y",
+            "-i", str(video_h264),
+            "-c:v", "libvpx",
+            "-crf", "10",
+            "-b:v", "1500k",
+            "-an",
+            str(output_file),
+        ]
     log.debug("Mux cmd: %s", mux_cmd)
     mux_result = subprocess.run(
         mux_cmd,
