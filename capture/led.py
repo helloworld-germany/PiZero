@@ -2,22 +2,20 @@
 LED / GPIO helper for visual status feedback.
 
 Patterns:
-    idle_blink  – slow pulse (scanning for QR)
-    connected   – long flash (QR scanned, session linked)
-    on          – solid (recording)
+    idle_blink   – slow pulse (scanning for QR)
+    connected    – long flash (QR scanned, session linked)
+    on           – solid (recording)
     upload_blink – fast blink (uploading)
-    error_flash – triple rapid flash
-    blink       – generic short blinks
+    error_flash  – triple rapid flash
+    blink        – generic short blinks
 
-Uses the onboard ACT LED via /sys/class/leds/ on Pi Zero 2 W.
-Falls back to RPi.GPIO on an external LED if ACT is unavailable.
+Uses RPi.GPIO on an external LED (LED_PIN in config).
 No-ops gracefully during development without hardware.
 """
 
 import logging
 import threading
 import time
-from pathlib import Path
 
 from . import config
 
@@ -26,51 +24,18 @@ log = logging.getLogger(__name__)
 _idle_thread = None
 _idle_stop = threading.Event()
 
-# ── LED backend detection ─────────────────────────────────────────
-# Prefer onboard ACT LED (no wiring needed), fall back to GPIO
-_act_path = None
+# ── GPIO import ───────────────────────────────────────────────────
 _gpio = None
-
-for _candidate in [
-    Path("/sys/class/leds/ACT"),
-    Path("/sys/class/leds/led0"),
-]:
-    if _candidate.is_dir():
-        _act_path = _candidate
-        break
-
-if not _act_path:
-    try:
-        import RPi.GPIO as GPIO  # type: ignore[import-untyped]
-        _gpio = GPIO
-    except ImportError:
-        pass
-
-if _act_path:
-    log.debug("Using onboard ACT LED at %s", _act_path)
-elif _gpio:
+try:
+    import RPi.GPIO as GPIO  # type: ignore[import-untyped]
+    _gpio = GPIO
     log.debug("Using GPIO LED on pin %s", config.LED_PIN)
-else:
-    log.debug("No LED backend available – feedback disabled")
-
-
-def _act_write(value: str):
-    """Write to the ACT LED sysfs interface."""
-    try:
-        (_act_path / "brightness").write_text(value)
-    except OSError:
-        pass
+except ImportError:
+    log.debug("RPi.GPIO not available – LED feedback disabled")
 
 
 def setup():
-    if _act_path:
-        # Take control away from the default mmc0 trigger
-        try:
-            (_act_path / "trigger").write_text("none")
-        except OSError:
-            pass
-        _act_write("0")
-    elif _gpio:
+    if _gpio:
         _gpio.setwarnings(False)
         _gpio.setmode(_gpio.BCM)
         _gpio.setup(config.LED_PIN, _gpio.OUT, initial=_gpio.LOW)
@@ -79,18 +44,14 @@ def setup():
 def on():
     """LED solid on – indicates recording."""
     _stop_idle()
-    if _act_path:
-        _act_write("1")
-    elif _gpio:
+    if _gpio:
         _gpio.output(config.LED_PIN, _gpio.HIGH)
 
 
 def off():
     """LED off."""
     _stop_idle()
-    if _act_path:
-        _act_write("0")
-    elif _gpio:
+    if _gpio:
         _gpio.output(config.LED_PIN, _gpio.LOW)
 
 
@@ -114,16 +75,12 @@ def idle_blink():
 
 
 def _led_high():
-    if _act_path:
-        _act_write("1")
-    elif _gpio:
+    if _gpio:
         _gpio.output(config.LED_PIN, _gpio.HIGH)
 
 
 def _led_low():
-    if _act_path:
-        _act_write("0")
-    elif _gpio:
+    if _gpio:
         _gpio.output(config.LED_PIN, _gpio.LOW)
 
 
@@ -176,11 +133,5 @@ def blink(times: int = 3, interval: float = 0.2):
 
 def cleanup():
     _stop_idle()
-    if _act_path:
-        # Restore default kernel trigger
-        try:
-            (_act_path / "trigger").write_text("mmc0")
-        except OSError:
-            pass
-    elif _gpio:
+    if _gpio:
         _gpio.cleanup()

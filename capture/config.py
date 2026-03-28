@@ -51,6 +51,7 @@ CAPTURE_DIR = Path(os.environ.get("CAPTURE_DIR", "/tmp/picapture"))
 # LED / GPIO feedback (optional)
 # ---------------------------------------------------------------------------
 LED_PIN = int(os.environ.get("LED_PIN", "17"))  # BCM numbering
+BUZZER_PIN = int(os.environ.get("BUZZER_PIN", "27"))  # BCM numbering
 
 # ---------------------------------------------------------------------------
 # Logging

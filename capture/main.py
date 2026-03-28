@@ -18,6 +18,7 @@ import time
 
 from . import config
 from . import led
+from . import buzzer
 from .camera import create_camera, configure_qr_mode, configure_capture_mode
 from .qr_scanner import run_scanner
 from .recorder import record
@@ -59,6 +60,7 @@ def main():
         sys.exit(1)
 
     led.setup()
+    buzzer.setup()
     picam2 = create_camera()
 
     log.info("══════════════════════════════════════════")
@@ -92,6 +94,7 @@ def _run_cycle(picam2):
 
     log.info("Session acquired: %s", master_session_id)
     led.connected_flash()
+    buzzer.beep()
     connect_session(master_session_id)
     picam2.stop()
 
@@ -106,6 +109,7 @@ def _run_cycle(picam2):
         log.exception("Recording failed")
         picam2.stop()
         led.error_flash()
+        buzzer.error_beep()
         return
 
     picam2.stop()
@@ -119,6 +123,7 @@ def _run_cycle(picam2):
     except Exception:
         log.exception("Upload failed")
         led.error_flash()
+        buzzer.error_beep()
         # Keep the file for manual retry
         return
 
@@ -133,6 +138,7 @@ def _run_cycle(picam2):
         log.exception("Finish-session failed (recording was uploaded)")
 
     led.blink(2, 0.3)
+    buzzer.double_beep()
     log.info("── CYCLE COMPLETE ── returning to idle in 3s")
     time.sleep(3)
 
@@ -141,6 +147,7 @@ def _cleanup(picam2):
     log.info("Cleaning up …")
     led.off()
     led.cleanup()
+    buzzer.cleanup()
     try:
         picam2.stop()
     except Exception:

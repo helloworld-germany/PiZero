@@ -35,6 +35,19 @@ The Pi acts as an autonomous recording device that replaces the phone/browser
 | Pi Camera Module 3 | Connected via ribbon cable |
 | USB microphone | Any ALSA-compatible device |
 | Status LED (optional) | GPIO 17, simple on/off feedback |
+| Active buzzer (optional) | GPIO 27, audio beep feedback |
+
+### Wiring (optional)
+
+```
+Pi GPIO 17 ──┤330Ω├── LED (+) ── GND
+Pi GPIO 27 ────────── Buzzer (+) ── GND
+```
+
+- **LED**: Any standard 3mm/5mm LED with a 330Ω resistor in series. Long leg (anode) toward the resistor, short leg (cathode) to GND.
+- **Buzzer**: Active buzzer (has built-in oscillator, just needs HIGH/LOW). `+` to GPIO, `−` to GND. No resistor needed.
+
+Both are optional — the software no-ops gracefully without them.
 
 ## Quick Start
 
@@ -68,6 +81,7 @@ All settings live in `capture/config.env` (or as environment variables):
 | `QR_SCAN_FPS` | `5` | Idle scanner frame rate |
 | `AUDIO_DEVICE` | `default` | ALSA device (`arecord -l` to list) |
 | `LED_PIN` | `17` | BCM GPIO pin for status LED |
+| `BUZZER_PIN` | `27` | BCM GPIO pin for active buzzer |
 
 ## WiFi
 
@@ -105,6 +119,7 @@ capture/
   recorder.py       # 20s video+audio capture + ffmpeg mux
   uploader.py       # HTTP upload & session finish
   led.py            # GPIO LED feedback
+  buzzer.py         # GPIO active buzzer feedback
 setup.sh            # one-shot Pi setup
 requirements.txt    # Python dependencies
 ```
