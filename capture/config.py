@@ -34,8 +34,8 @@ VIDEO_HEIGHT = int(os.environ.get("VIDEO_HEIGHT", "1280"))
 VIDEO_FPS = int(os.environ.get("VIDEO_FPS", "30"))
 
 # QR scanner (fast scan mode)
-QR_SCAN_WIDTH = int(os.environ.get("QR_SCAN_WIDTH", "320"))
-QR_SCAN_HEIGHT = int(os.environ.get("QR_SCAN_HEIGHT", "240"))
+QR_SCAN_WIDTH = int(os.environ.get("QR_SCAN_WIDTH", "480"))
+QR_SCAN_HEIGHT = int(os.environ.get("QR_SCAN_HEIGHT", "480"))
 QR_SCAN_FPS = int(os.environ.get("QR_SCAN_FPS", "15"))
 
 # Audio device (ALSA hw id, e.g. "hw:1,0" for USB mic)

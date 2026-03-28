@@ -14,6 +14,7 @@ import re
 import time
 from urllib.parse import parse_qs, urlparse
 
+import numpy as np
 from pyzbar import pyzbar
 
 from . import config
@@ -45,11 +46,18 @@ def scan_frame(frame):
     """Decode QR codes in a numpy frame and return a masterSessionId or None."""
     # Convert to grayscale for faster pyzbar decoding
     if frame.ndim == 3:
-        # Fast luminance approximation: use green channel (best contrast)
-        gray = frame[:, :, 1]
+        gray = frame[:, :, 1]  # green channel – best contrast
     else:
         gray = frame
+
+    # Try raw grayscale first (fastest path)
     results = pyzbar.decode(gray, symbols=[pyzbar.ZBarSymbol.QRCODE])
+    if not results:
+        # Enhance contrast with adaptive thresholding for difficult lighting
+        mean = np.mean(gray)
+        enhanced = np.clip((gray.astype(np.int16) - mean) * 2 + 128, 0, 255).astype(np.uint8)
+        results = pyzbar.decode(enhanced, symbols=[pyzbar.ZBarSymbol.QRCODE])
+
     for result in results:
         data = result.data.decode("utf-8", errors="replace")
         session_id = extract_master_session_id(data)

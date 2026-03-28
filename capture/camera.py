@@ -17,21 +17,26 @@ def create_camera():
 
 def configure_qr_mode(picam2):
     """
-    Configure the camera for fast QR scanning:
-    small resolution, video stream, grayscale-friendly.
+    Configure the camera for fast, reliable QR scanning:
+    moderate resolution, continuous autofocus, video stream.
     """
+    from libcamera import controls as libcamera_controls  # type: ignore[import-untyped]
+
     cam_config = picam2.create_video_configuration(
         main={"size": (config.QR_SCAN_WIDTH, config.QR_SCAN_HEIGHT), "format": "RGB888"},
-        buffer_count=2,
+        buffer_count=4,
     )
     picam2.configure(cam_config)
     picam2.start()
     try:
         picam2.set_controls({
             "FrameRate": config.QR_SCAN_FPS,
+            "AfMode": libcamera_controls.AfModeEnum.Continuous,
+            "AfSpeed": libcamera_controls.AfSpeedEnum.Fast,
         })
+        log.info("Continuous autofocus enabled")
     except Exception as exc:
-        log.debug("Could not set QR scan frame rate: %s", exc)
+        log.warning("Could not enable autofocus (fixed-focus camera?): %s", exc)
 
     log.info(
         "Camera in QR-scan mode (%dx%d @ %d fps)",
