@@ -83,7 +83,7 @@ def _run_cycle(picam2):
 
     # ── IDLE: scan for QR ──────────────────────────────────────────
     log.info("── IDLE ── scanning for QR code …")
-    led.off()
+    led.idle_blink()
     configure_qr_mode(picam2)
 
     master_session_id = run_scanner(picam2, shutdown_check=lambda: _shutdown)
@@ -91,6 +91,7 @@ def _run_cycle(picam2):
         return
 
     log.info("Session acquired: %s", master_session_id)
+    led.connected_flash()
     connect_session(master_session_id)
     picam2.stop()
 
@@ -104,20 +105,20 @@ def _run_cycle(picam2):
     except Exception:
         log.exception("Recording failed")
         picam2.stop()
-        led.blink(5, 0.1)
+        led.error_flash()
         return
 
     picam2.stop()
 
     # ── UPLOAD ─────────────────────────────────────────────────────
     log.info("── UPLOAD ──")
-    led.blink(3, 0.2)
+    led.upload_blink()
 
     try:
         upload_recording(master_session_id, output_file)
     except Exception:
         log.exception("Upload failed")
-        led.blink(5, 0.1)
+        led.error_flash()
         # Keep the file for manual retry
         return
 
