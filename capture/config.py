@@ -51,7 +51,38 @@ CAPTURE_DIR = Path(os.environ.get("CAPTURE_DIR", "/tmp/picapture"))
 # LED / GPIO feedback (optional)
 # ---------------------------------------------------------------------------
 LED_PIN = int(os.environ.get("LED_PIN", "17"))  # BCM numbering
-BUZZER_PIN = int(os.environ.get("BUZZER_PIN", "27"))  # BCM numbering
+
+# ---------------------------------------------------------------------------
+# Buzzer (optional hardware board)
+# ---------------------------------------------------------------------------
+USE_BUZZER = os.environ.get("USE_BUZZER", "false").lower() in ("1", "true", "yes")
+BUZZER_PIN = int(os.environ.get("BUZZER_PIN", "23"))  # BCM 23 / physical pin 16
+BUZZER_PWM = os.environ.get("BUZZER_PWM", "false").lower() in ("1", "true", "yes")
+BUZZER_FREQUENCY = int(os.environ.get("BUZZER_FREQUENCY", "1000"))
+
+# ---------------------------------------------------------------------------
+# Push-button (optional hardware board)
+# ---------------------------------------------------------------------------
+USE_BUTTON = os.environ.get("USE_BUTTON", "false").lower() in ("1", "true", "yes")
+BUTTON_PIN = int(os.environ.get("BUTTON_PIN", "3"))  # BCM 3 / physical pin 5
+BUTTON_ACTIVE_LOW = os.environ.get("BUTTON_ACTIVE_LOW", "true").lower() in ("1", "true", "yes")
+
+# ---------------------------------------------------------------------------
+# I2S microphone (optional hardware board)
+#   BCLK/SCK: GPIO18, WS/LRCLK: GPIO19, SD/DOUT: GPIO20
+#   VDD: 3.3V, GND: GND
+# ---------------------------------------------------------------------------
+USE_I2S_MIC = os.environ.get("USE_I2S_MIC", "false").lower() in ("1", "true", "yes")
+I2S_AUDIO_DEVICE = os.environ.get("I2S_AUDIO_DEVICE", "default")
+
+# Audio backend selection: "auto", "alsa", "i2s"
+AUDIO_BACKEND = os.environ.get("AUDIO_BACKEND", "auto")
+
+# ---------------------------------------------------------------------------
+# Session limits
+# ---------------------------------------------------------------------------
+HARD_TIMEOUT_S = int(os.environ.get("HARD_TIMEOUT_S", "1800"))  # 30 minutes
+CHUNK_DURATION_S = int(os.environ.get("CHUNK_DURATION_S", "30"))
 
 # ---------------------------------------------------------------------------
 # Logging
