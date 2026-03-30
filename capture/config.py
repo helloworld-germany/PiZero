@@ -57,7 +57,7 @@ LED_PIN = int(os.environ.get("LED_PIN", "17"))  # BCM numbering
 # ---------------------------------------------------------------------------
 USE_BUZZER = os.environ.get("USE_BUZZER", "false").lower() in ("1", "true", "yes")
 BUZZER_PIN = int(os.environ.get("BUZZER_PIN", "23"))  # BCM 23 / physical pin 16
-BUZZER_PWM = os.environ.get("BUZZER_PWM", "false").lower() in ("1", "true", "yes")
+BUZZER_PWM = os.environ.get("BUZZER_PWM", "true").lower() in ("1", "true", "yes")
 BUZZER_FREQUENCY = int(os.environ.get("BUZZER_FREQUENCY", "1000"))
 
 # ---------------------------------------------------------------------------
