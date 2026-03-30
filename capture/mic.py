@@ -25,16 +25,20 @@ log = logging.getLogger(__name__)
 
 def _alsa_device_available(device: str) -> bool:
     """Return True if *device* appears usable as an ALSA capture source."""
-    try:
-        result = subprocess.run(
-            ["arecord", "-D", device, "-d", "0", "-f", "S16_LE", "-r", "16000", "/dev/null"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+    # Try S32_LE first (required by I2S mics like INMP441), then S16_LE
+    for fmt in ("S32_LE", "S16_LE"):
+        try:
+            result = subprocess.run(
+                ["arecord", "-D", device, "-d", "0", "-f", fmt, "-r", "16000", "/dev/null"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def _any_capture_card() -> bool:
