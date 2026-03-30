@@ -76,7 +76,7 @@ def off():
 
 
 def idle_blink():
-    """Start slow background blink (1s on / 1s off) for idle/scanning state."""
+    """Start slow background blink (0.5s on / 1s off) for idle/scanning state."""
     global _idle_thread
     _stop_idle()
     _idle_stop.clear()
@@ -84,7 +84,7 @@ def idle_blink():
     def _run():
         while not _idle_stop.is_set():
             _led_high()
-            if _idle_stop.wait(1.0):
+            if _idle_stop.wait(0.5):
                 break
             _led_low()
             if _idle_stop.wait(1.0):

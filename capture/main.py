@@ -263,6 +263,11 @@ def _run_cycle(picam2):
             log.info("Backend requested stop – ending session")
             break
 
+        # Without button, record only one chunk (original single-shot behavior)
+        if not config.USE_BUTTON:
+            log.info("Button disabled – single-chunk mode, ending session")
+            break
+
     picam2.stop()
 
     # ── FINISH SESSION ────────────────────────────────────────────
