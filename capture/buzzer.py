@@ -140,5 +140,3 @@ def cleanup():
             _buzzer.close()
         except Exception:
             pass
-    if _gpio and _enabled:
-        _gpio.output(config.BUZZER_PIN, _gpio.LOW)
