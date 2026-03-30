@@ -2,7 +2,10 @@
 Optional push-button support (GPIO).
 
 Detects short press, long press (3s), and very-long press (8s).
-No-ops gracefully when USE_BUTTON is false or RPi.GPIO is unavailable.
+No-ops gracefully when USE_BUTTON is false or no GPIO backend is available.
+
+Uses gpiozero (works on Debian 13 / Trixie with lgpio).
+Falls back to RPi.GPIO on older systems.
 
 Default wiring: GPIO3 (BCM 3 / physical pin 5), active-low with internal pull-up.
 """
@@ -15,7 +18,7 @@ from . import config
 
 log = logging.getLogger(__name__)
 
-_gpio = None
+_btn = None  # gpiozero Button or fallback wrapper
 _enabled = False
 _monitor_thread = None
 _monitor_stop = threading.Event()
@@ -32,24 +35,52 @@ _DEBOUNCE_S = 0.05
 
 def setup():
     """Initialise GPIO for the button if enabled and available."""
-    global _gpio, _enabled
+    global _btn, _enabled
     if not config.USE_BUTTON:
         log.debug("Button disabled (USE_BUTTON=false)")
         return
 
+    # Try gpiozero first
     try:
-        import RPi.GPIO as GPIO  # type: ignore[import-untyped]
-        _gpio = GPIO
-    except ImportError:
-        log.debug("RPi.GPIO not available – button support disabled")
+        from gpiozero import Button as _GpioButton  # type: ignore[import-untyped]
+        _btn = _GpioButton(
+            config.BUTTON_PIN,
+            pull_up=config.BUTTON_ACTIVE_LOW,
+            bounce_time=_DEBOUNCE_S,
+        )
+        _enabled = True
+        log.info("Button enabled (gpiozero) on GPIO%d (active_low=%s)",
+                 config.BUTTON_PIN, config.BUTTON_ACTIVE_LOW)
         return
+    except Exception:
+        pass
 
-    _gpio.setwarnings(False)
-    _gpio.setmode(_gpio.BCM)
-    pull = _gpio.PUD_UP if config.BUTTON_ACTIVE_LOW else _gpio.PUD_DOWN
-    _gpio.setup(config.BUTTON_PIN, _gpio.IN, pull_up_down=pull)
-    _enabled = True
-    log.info("Button enabled on GPIO%d (active_low=%s)", config.BUTTON_PIN, config.BUTTON_ACTIVE_LOW)
+    # Fallback to RPi.GPIO
+    try:
+        import RPi.GPIO as _GPIO  # type: ignore[import-untyped]
+
+        class _FallbackButton:
+            """Minimal adapter matching the interface we need via RPi.GPIO."""
+            def __init__(self, pin, active_low):
+                self._pin = pin
+                self._active_low = active_low
+                _GPIO.setwarnings(False)
+                _GPIO.setmode(_GPIO.BCM)
+                pull = _GPIO.PUD_UP if active_low else _GPIO.PUD_DOWN
+                _GPIO.setup(pin, _GPIO.IN, pull_up_down=pull)
+            @property
+            def is_pressed(self):
+                val = _GPIO.input(self._pin)
+                return (val == _GPIO.LOW) if self._active_low else (val == _GPIO.HIGH)
+            def close(self):
+                _GPIO.cleanup(self._pin)
+
+        _btn = _FallbackButton(config.BUTTON_PIN, config.BUTTON_ACTIVE_LOW)
+        _enabled = True
+        log.info("Button enabled (RPi.GPIO fallback) on GPIO%d (active_low=%s)",
+                 config.BUTTON_PIN, config.BUTTON_ACTIVE_LOW)
+    except Exception:
+        log.debug("No GPIO backend available – button support disabled")
 
 
 def register(on_short_press=None, on_long_press=None, on_vlong_press=None):
@@ -82,10 +113,9 @@ def stop_monitor():
 
 
 def _is_pressed() -> bool:
-    if not _gpio:
+    if not _btn:
         return False
-    val = _gpio.input(config.BUTTON_PIN)
-    return (val == _gpio.LOW) if config.BUTTON_ACTIVE_LOW else (val == _gpio.HIGH)
+    return _btn.is_pressed
 
 
 def _poll_loop():
@@ -128,3 +158,8 @@ def _fire(callback):
 
 def cleanup():
     stop_monitor()
+    if _btn:
+        try:
+            _btn.close()
+        except Exception:
+            pass

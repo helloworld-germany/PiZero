@@ -9,7 +9,8 @@ Patterns:
     error_flash  – triple rapid flash
     blink        – generic short blinks
 
-Uses RPi.GPIO on an external LED (LED_PIN in config).
+Uses gpiozero (works on Debian 13 / Trixie with lgpio) on an external LED
+(LED_PIN in config).  Falls back to RPi.GPIO on older systems.
 No-ops gracefully during development without hardware.
 """
 
@@ -24,35 +25,54 @@ log = logging.getLogger(__name__)
 _idle_thread = None
 _idle_stop = threading.Event()
 
-# ── GPIO import ───────────────────────────────────────────────────
-_gpio = None
+# ── GPIO backend ──────────────────────────────────────────────────
+_led = None  # gpiozero.LED instance (or None)
+
 try:
-    import RPi.GPIO as GPIO  # type: ignore[import-untyped]
-    _gpio = GPIO
-    log.debug("Using GPIO LED on pin %s", config.LED_PIN)
-except ImportError:
-    log.debug("RPi.GPIO not available – LED feedback disabled")
+    from gpiozero import LED as _GpioLED  # type: ignore[import-untyped]
+    _led = _GpioLED(config.LED_PIN, initial_value=False)
+    log.debug("Using gpiozero LED on pin %s", config.LED_PIN)
+except Exception:
+    try:
+        import RPi.GPIO as _GPIO  # type: ignore[import-untyped]
+
+        class _FallbackLED:
+            """Minimal adapter matching gpiozero.LED interface via RPi.GPIO."""
+            def __init__(self, pin):
+                self._pin = pin
+                _GPIO.setwarnings(False)
+                _GPIO.setmode(_GPIO.BCM)
+                _GPIO.setup(pin, _GPIO.OUT, initial=_GPIO.LOW)
+            def on(self):
+                _GPIO.output(self._pin, _GPIO.HIGH)
+            def off(self):
+                _GPIO.output(self._pin, _GPIO.LOW)
+            def close(self):
+                _GPIO.cleanup(self._pin)
+
+        _led = _FallbackLED(config.LED_PIN)
+        log.debug("Using RPi.GPIO fallback LED on pin %s", config.LED_PIN)
+    except Exception:
+        log.debug("No GPIO backend available – LED feedback disabled")
 
 
 def setup():
-    if _gpio:
-        _gpio.setwarnings(False)
-        _gpio.setmode(_gpio.BCM)
-        _gpio.setup(config.LED_PIN, _gpio.OUT, initial=_gpio.LOW)
+    # Initialization already done at import time; kept for API compat.
+    pass
 
 
 def on():
     """LED solid on – indicates recording."""
     _stop_idle()
-    if _gpio:
-        _gpio.output(config.LED_PIN, _gpio.HIGH)
+    if _led:
+        _led.on()
 
 
 def off():
     """LED off."""
     _stop_idle()
-    if _gpio:
-        _gpio.output(config.LED_PIN, _gpio.LOW)
+    if _led:
+        _led.off()
 
 
 def idle_blink():
@@ -75,13 +95,13 @@ def idle_blink():
 
 
 def _led_high():
-    if _gpio:
-        _gpio.output(config.LED_PIN, _gpio.HIGH)
+    if _led:
+        _led.on()
 
 
 def _led_low():
-    if _gpio:
-        _gpio.output(config.LED_PIN, _gpio.LOW)
+    if _led:
+        _led.off()
 
 
 def _stop_idle():
@@ -133,5 +153,10 @@ def blink(times: int = 3, interval: float = 0.2):
 
 def cleanup():
     _stop_idle()
+    if _led:
+        try:
+            _led.close()
+        except Exception:
+            pass
     if _gpio:
         _gpio.cleanup()

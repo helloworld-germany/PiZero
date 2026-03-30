@@ -3,7 +3,10 @@ Buzzer / GPIO helper for audio feedback.
 
 Uses an active piezo buzzer on BUZZER_PIN (default BCM 23 / physical pin 16).
 Supports simple HIGH/LOW drive or optional PWM mode for passive buzzers.
-No-ops gracefully when USE_BUZZER is false or RPi.GPIO is unavailable.
+No-ops gracefully when USE_BUZZER is false or no GPIO backend is available.
+
+Uses gpiozero (works on Debian 13 / Trixie with lgpio).
+Falls back to RPi.GPIO on older systems.
 
 Note: GPIO18 is deliberately avoided as default because it may be needed
 for I2S BCLK.
@@ -16,48 +19,73 @@ from . import config
 
 log = logging.getLogger(__name__)
 
-_gpio = None
-_pwm = None
+_buzzer = None  # gpiozero output device or fallback wrapper
 _enabled = False
 
 
 def setup():
-    global _gpio, _pwm, _enabled
+    global _buzzer, _enabled
     if not config.USE_BUZZER:
         log.debug("Buzzer disabled (USE_BUZZER=false)")
         return
 
+    # Try gpiozero first (Debian 13+), then RPi.GPIO fallback
     try:
-        import RPi.GPIO as GPIO  # type: ignore[import-untyped]
-        _gpio = GPIO
-    except ImportError:
-        log.debug("RPi.GPIO not available – buzzer feedback disabled")
-        return
+        if config.BUZZER_PWM:
+            from gpiozero import TonalBuzzer as _TB  # type: ignore[import-untyped]
+            _buzzer = _TB(config.BUZZER_PIN)
+            log.debug("Buzzer gpiozero TonalBuzzer at GPIO%d", config.BUZZER_PIN)
+        else:
+            from gpiozero import OutputDevice as _OD  # type: ignore[import-untyped]
+            _buzzer = _OD(config.BUZZER_PIN, initial_value=False)
+            log.debug("Buzzer gpiozero OutputDevice at GPIO%d", config.BUZZER_PIN)
+        _enabled = True
+    except Exception:
+        try:
+            import RPi.GPIO as _GPIO  # type: ignore[import-untyped]
 
-    _gpio.setwarnings(False)
-    _gpio.setmode(_gpio.BCM)
-    _gpio.setup(config.BUZZER_PIN, _gpio.OUT, initial=_gpio.LOW)
+            class _FallbackBuzzer:
+                """Minimal adapter matching the interface we need via RPi.GPIO."""
+                def __init__(self, pin, pwm, freq):
+                    self._pin = pin
+                    self._pwm_obj = None
+                    _GPIO.setwarnings(False)
+                    _GPIO.setmode(_GPIO.BCM)
+                    _GPIO.setup(pin, _GPIO.OUT, initial=_GPIO.LOW)
+                    if pwm:
+                        self._pwm_obj = _GPIO.PWM(pin, freq)
+                def on(self):
+                    if self._pwm_obj:
+                        self._pwm_obj.start(50)
+                    else:
+                        _GPIO.output(self._pin, _GPIO.HIGH)
+                def off(self):
+                    if self._pwm_obj:
+                        self._pwm_obj.stop()
+                    else:
+                        _GPIO.output(self._pin, _GPIO.LOW)
+                def close(self):
+                    self.off()
+                    _GPIO.cleanup(self._pin)
 
-    if config.BUZZER_PWM:
-        _pwm = _gpio.PWM(config.BUZZER_PIN, config.BUZZER_FREQUENCY)
-        log.debug("Buzzer PWM mode at %d Hz", config.BUZZER_FREQUENCY)
+            _buzzer = _FallbackBuzzer(config.BUZZER_PIN, config.BUZZER_PWM, config.BUZZER_FREQUENCY)
+            _enabled = True
+            log.debug("Buzzer RPi.GPIO fallback at GPIO%d", config.BUZZER_PIN)
+        except Exception:
+            log.debug("No GPIO backend available – buzzer feedback disabled")
+            return
 
-    _enabled = True
     log.info("Buzzer enabled on GPIO%d (pwm=%s)", config.BUZZER_PIN, config.BUZZER_PWM)
 
 
 def _buzz_on():
-    if _pwm:
-        _pwm.start(50)
-    elif _gpio:
-        _gpio.output(config.BUZZER_PIN, _gpio.HIGH)
+    if _buzzer:
+        _buzzer.on()
 
 
 def _buzz_off():
-    if _pwm:
-        _pwm.stop()
-    elif _gpio:
-        _gpio.output(config.BUZZER_PIN, _gpio.LOW)
+    if _buzzer:
+        _buzzer.off()
 
 
 def beep(duration: float = 0.15):
@@ -96,7 +124,10 @@ def error_beep():
 
 
 def cleanup():
-    if _pwm:
-        _pwm.stop()
+    if _buzzer:
+        try:
+            _buzzer.close()
+        except Exception:
+            pass
     if _gpio and _enabled:
         _gpio.output(config.BUZZER_PIN, _gpio.LOW)
