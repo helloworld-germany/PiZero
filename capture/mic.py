@@ -25,11 +25,18 @@ log = logging.getLogger(__name__)
 
 def _alsa_device_available(device: str) -> bool:
     """Return True if *device* appears usable as an ALSA capture source."""
-    # Try S32_LE first (required by I2S mics like INMP441), then S16_LE
-    for fmt in ("S32_LE", "S16_LE"):
+    # I2S mics (e.g. INMP441) require specific format/rate/channels.
+    # Try several combinations to find one that works.
+    probes = [
+        ("-f", "S32_LE", "-r", "48000", "-c", "2"),
+        ("-f", "S32_LE", "-r", "16000", "-c", "1"),
+        ("-f", "S16_LE", "-r", "16000", "-c", "1"),
+        ("-f", "S16_LE", "-r", "44100", "-c", "1"),
+    ]
+    for params in probes:
         try:
             result = subprocess.run(
-                ["arecord", "-D", device, "-d", "0", "-f", fmt, "-r", "16000", "/dev/null"],
+                ["arecord", "-D", device, "-d", "0", *params, "/dev/null"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=5,
@@ -96,8 +103,10 @@ def _try_i2s() -> str | None:
         return None
     dev = config.I2S_AUDIO_DEVICE
     if _alsa_device_available(dev):
-        log.info("I2S audio device available: %s", dev)
-        return dev
+        # Return plughw: variant so ffmpeg can auto-convert format/rate
+        plug_dev = dev.replace("hw:", "plughw:") if dev.startswith("hw:") else dev
+        log.info("I2S audio device available: %s (using %s)", dev, plug_dev)
+        return plug_dev
     log.warning("I2S audio device '%s' not available", dev)
     return None
 
