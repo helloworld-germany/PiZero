@@ -1,0 +1,10 @@
+# Local deployment config (copy config.env.example → config.env)
+capture/config.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Capture artifacts
+/tmp/picapture/

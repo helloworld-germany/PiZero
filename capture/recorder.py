@@ -5,7 +5,7 @@ Uses picamera2 for H.264 video and ffmpeg for ALSA audio, then muxes them
 into a single .mp4 file that the vidaugment backend accepts.
 
 Supports:
-  - Chunked recording (CHUNK_DURATION_S, default 30s)
+  - Chunked recording (RECORD_DURATION_S per chunk)
   - Pause / resume via an external threading.Event
   - Audio device selection via mic.py (I2S / ALSA / auto)
   - Graceful fallback to video-only when no audio device is found
@@ -58,7 +58,7 @@ def record_chunk(
     stop_event: threading.Event | None = None,
 ) -> Path | None:
     """
-    Record a single chunk of *chunk_duration* seconds (default CHUNK_DURATION_S).
+    Record a single chunk of *chunk_duration* seconds (default RECORD_DURATION_S).
 
     Like record(), but designed to be called in a loop.  Returns None if
     *stop_event* fires before the chunk finishes (caller should upload any
@@ -66,7 +66,7 @@ def record_chunk(
 
     *picam2* must already be configured and **started** in capture mode.
     """
-    chunk_duration = chunk_duration or config.CHUNK_DURATION_S
+    chunk_duration = chunk_duration or config.RECORD_DURATION_S
     cap_dir = _ensure_capture_dir()
     ts = int(time.time() * 1000)
     video_h264 = cap_dir / f"chunk-{ts}.h264"

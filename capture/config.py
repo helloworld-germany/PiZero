@@ -82,7 +82,6 @@ AUDIO_BACKEND = os.environ.get("AUDIO_BACKEND", "auto")
 # Session limits
 # ---------------------------------------------------------------------------
 HARD_TIMEOUT_S = int(os.environ.get("HARD_TIMEOUT_S", "1800"))  # 30 minutes
-CHUNK_DURATION_S = int(os.environ.get("CHUNK_DURATION_S", "30"))
 
 # ---------------------------------------------------------------------------
 # Logging

@@ -156,7 +156,7 @@ def main():
     log.info("══════════════════════════════════════════")
     log.info("  PiZero Capture System")
     log.info("  API: %s", config.API_BASE_URL)
-    log.info("  Chunk duration: %ds", config.CHUNK_DURATION_S)
+    log.info("  Chunk duration: %ds", config.RECORD_DURATION_S)
     log.info("  Hard timeout: %ds", config.HARD_TIMEOUT_S)
     log.info("  Button: %s  Buzzer: %s  I2S mic: %s",
              config.USE_BUTTON, config.USE_BUZZER, config.USE_I2S_MIC)
@@ -207,7 +207,7 @@ def _run_cycle(picam2):
 
     # ── STATE 3: CHUNKED CAPTURE + UPLOAD ─────────────────────────
     log.info("── CAPTURE ── chunked recording (chunk=%ds, hard_timeout=%ds)",
-             config.CHUNK_DURATION_S, config.HARD_TIMEOUT_S)
+             config.RECORD_DURATION_S, config.HARD_TIMEOUT_S)
     led.on()
     configure_capture_mode(picam2)
 
@@ -222,7 +222,7 @@ def _run_cycle(picam2):
             break
 
         remaining = config.HARD_TIMEOUT_S - elapsed
-        chunk_dur = min(config.CHUNK_DURATION_S, int(remaining))
+        chunk_dur = min(config.RECORD_DURATION_S, int(remaining))
         if chunk_dur <= 0:
             break
 
