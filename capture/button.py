@@ -120,14 +120,33 @@ def _is_pressed() -> bool:
 
 def _poll_loop():
     """Poll the button and classify press duration."""
+    from . import buzzer as _buzzer
+
     while not _monitor_stop.is_set():
         if not _is_pressed():
             _monitor_stop.wait(0.05)
             continue
 
-        # Button is pressed – measure how long
+        # Button is pressed – measure how long, with live feedback
         press_start = time.monotonic()
+        long_signalled = False
+        vlong_signalled = False
+
         while _is_pressed() and not _monitor_stop.is_set():
+            held = time.monotonic() - press_start
+
+            # Feedback at long-press threshold (3s)
+            if not long_signalled and held >= LONG_PRESS_S:
+                long_signalled = True
+                _buzzer.beep(0.1)
+                log.debug("Button: long-press threshold reached")
+
+            # Feedback at very-long-press threshold (8s)
+            if not vlong_signalled and held >= VLONG_PRESS_S:
+                vlong_signalled = True
+                _buzzer.triple_beep()
+                log.debug("Button: very-long-press threshold reached")
+
             _monitor_stop.wait(_DEBOUNCE_S)
 
         duration = time.monotonic() - press_start

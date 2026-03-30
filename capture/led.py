@@ -144,11 +144,23 @@ def error_flash():
 def blink(times: int = 3, interval: float = 0.2):
     """Generic blink pattern."""
     _stop_idle()
-    for _ in range(times):
+    for i in range(times):
         _led_high()
         time.sleep(interval)
         _led_low()
-        time.sleep(interval)
+        if i < times - 1:
+            time.sleep(interval)
+
+
+def cleanup():
+    """Release GPIO resources."""
+    _stop_idle()
+    if _led:
+        try:
+            _led.off()
+            _led.close()
+        except Exception:
+            pass
 
 
 def cleanup():

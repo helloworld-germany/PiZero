@@ -121,7 +121,12 @@ def record_chunk(
     if audio_proc is not None:
         if stopped_early:
             audio_proc.terminate()
-        audio_proc.wait(timeout=chunk_duration + 10)
+        try:
+            audio_proc.wait(timeout=chunk_duration + 10)
+        except subprocess.TimeoutExpired:
+            log.warning("Audio process did not exit in time – killing")
+            audio_proc.kill()
+            audio_proc.wait(timeout=5)
         if audio_proc.returncode not in (0, -15):  # -15 = SIGTERM
             has_audio = False
         else:

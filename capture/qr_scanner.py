@@ -91,3 +91,4 @@ def run_scanner(picam2, shutdown_check=None) -> str | None:
         session_id = scan_frame(frame)
         if session_id:
             return session_id
+        time.sleep(0.05)  # avoid 100% CPU spin
