@@ -33,11 +33,10 @@ def setup():
     # Try gpiozero first (Debian 13+), then RPi.GPIO fallback
     try:
         if config.BUZZER_PWM:
-            from gpiozero import TonalBuzzer as _TB  # type: ignore[import-untyped]
-            from gpiozero.tones import Tone  # type: ignore[import-untyped]
-            _buzzer = _TB(config.BUZZER_PIN)
+            from gpiozero import PWMOutputDevice  # type: ignore[import-untyped]
+            _buzzer = PWMOutputDevice(config.BUZZER_PIN, initial_value=0, frequency=config.BUZZER_FREQUENCY)
             _is_tonal = True
-            log.debug("Buzzer gpiozero TonalBuzzer at GPIO%d", config.BUZZER_PIN)
+            log.debug("Buzzer gpiozero PWMOutputDevice at GPIO%d (%d Hz)", config.BUZZER_PIN, config.BUZZER_FREQUENCY)
         else:
             from gpiozero import Buzzer as _GpioBuzzer  # type: ignore[import-untyped]
             _buzzer = _GpioBuzzer(config.BUZZER_PIN, initial_value=False)
@@ -86,8 +85,7 @@ def _buzz_on():
     if not _buzzer:
         return
     if _is_tonal:
-        from gpiozero.tones import Tone  # type: ignore[import-untyped]
-        _buzzer.play(Tone(config.BUZZER_FREQUENCY))
+        _buzzer.value = 0.5  # 50% duty cycle
     else:
         _buzzer.on()
 
@@ -96,7 +94,7 @@ def _buzz_off():
     if not _buzzer:
         return
     if _is_tonal:
-        _buzzer.stop()
+        _buzzer.value = 0
     else:
         _buzzer.off()
 

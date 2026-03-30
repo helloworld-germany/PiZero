@@ -158,5 +158,3 @@ def cleanup():
             _led.close()
         except Exception:
             pass
-    if _gpio:
-        _gpio.cleanup()
