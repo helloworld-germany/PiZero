@@ -128,9 +128,17 @@ def record_chunk(
             audio_proc.kill()
             audio_proc.wait(timeout=5)
         if audio_proc.returncode not in (0, -15):  # -15 = SIGTERM
+            log.warning("Audio process exited with code %d", audio_proc.returncode)
+            stderr_out = audio_proc.stderr.read().decode(errors="replace") if audio_proc.stderr else ""
+            if stderr_out:
+                log.warning("Audio stderr: %s", stderr_out[-500:])
             has_audio = False
         else:
-            log.info("Chunk audio done (%s)", audio_wav)
+            wav_size = audio_wav.stat().st_size if audio_wav.exists() else 0
+            log.info("Chunk audio done (%s, %.1f KB)", audio_wav, wav_size / 1024)
+            if wav_size < 1000:
+                log.warning("Audio WAV is suspiciously small (%d bytes) – likely empty", wav_size)
+                has_audio = False
 
     # Mux
     if has_audio and audio_wav.exists():
@@ -153,15 +161,20 @@ def record_chunk(
             str(output_file),
         ]
 
+    log.debug("Mux command: %s", " ".join(mux_cmd))
     mux_result = subprocess.run(
         mux_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=120,
     )
+    mux_stderr = mux_result.stderr.decode(errors="replace")
     if mux_result.returncode != 0:
-        stderr = mux_result.stderr.decode(errors="replace")
-        log.error("Chunk mux failed (%d): %s", mux_result.returncode, stderr)
+        log.error("Chunk mux failed (%d): %s", mux_result.returncode, mux_stderr)
         video_h264.unlink(missing_ok=True)
         audio_wav.unlink(missing_ok=True)
-        raise RuntimeError(f"ffmpeg chunk mux failed: {stderr[:500]}")
+        raise RuntimeError(f"ffmpeg chunk mux failed: {mux_stderr[:500]}")
+    else:
+        # Log stderr even on success – ffmpeg warnings reveal dropped streams
+        if mux_stderr:
+            log.debug("Mux stderr: %s", mux_stderr[-500:])
 
     video_h264.unlink(missing_ok=True)
     audio_wav.unlink(missing_ok=True)
