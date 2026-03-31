@@ -146,16 +146,22 @@ def record_chunk(
         if audio_stderr:
             log.debug("Audio capture stderr: %s", audio_stderr.strip()[-500:])
 
-        if audio_proc.returncode not in (0, -15):  # -15 = SIGTERM
+        # arecord returns -15 (SIGTERM) or 1 when terminated early – both OK
+        acceptable = (0, -15) if not stopped_early else (0, 1, -15, -2)
+        if audio_proc.returncode not in acceptable:
             log.warning("Audio process exited with code %d", audio_proc.returncode)
             has_audio = False
         else:
             wav_size = audio_wav.stat().st_size if audio_wav.exists() else 0
-            expected_size = config.AUDIO_SAMPLE_RATE * 2 * chunk_duration  # 16-bit mono
-            log.info("Chunk audio done (%s, %.1f KB)", audio_wav, wav_size / 1024)
-            if wav_size < expected_size * 0.5:
-                log.warning("Audio WAV is too short! Got %.1f KB, expected ~%.0f KB",
-                            wav_size / 1024, expected_size / 1024)
+            if stopped_early:
+                # Any data is good when stopped early by button
+                min_size = 1000  # at least ~0.01s of audio
+                log.info("Chunk audio done (early stop) (%s, %.1f KB)", audio_wav, wav_size / 1024)
+            else:
+                min_size = config.AUDIO_SAMPLE_RATE * 2 * chunk_duration * 0.5  # 50% of expected
+                log.info("Chunk audio done (%s, %.1f KB)", audio_wav, wav_size / 1024)
+            if wav_size < min_size:
+                log.warning("Audio WAV too small: %.1f KB", wav_size / 1024)
                 has_audio = False
 
         # Small delay to let ALSA device fully release before next chunk
