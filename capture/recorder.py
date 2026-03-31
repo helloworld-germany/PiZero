@@ -90,7 +90,6 @@ def record_chunk(
             "-d", str(chunk_duration),
             str(audio_wav),
         ]
-        log.info("Audio command: %s", " ".join(audio_cmd))
         audio_proc = subprocess.Popen(
             audio_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
         )
@@ -132,7 +131,7 @@ def record_chunk(
         # Always log audio stderr for diagnostics
         audio_stderr = audio_proc.stderr.read().decode(errors="replace") if audio_proc.stderr else ""
         if audio_stderr:
-            log.info("Audio capture stderr: %s", audio_stderr.strip()[-800:])
+            log.debug("Audio capture stderr: %s", audio_stderr.strip()[-500:])
 
         if audio_proc.returncode not in (0, -15):  # -15 = SIGTERM
             log.warning("Audio process exited with code %d", audio_proc.returncode)
@@ -140,8 +139,7 @@ def record_chunk(
         else:
             wav_size = audio_wav.stat().st_size if audio_wav.exists() else 0
             expected_size = config.AUDIO_SAMPLE_RATE * 2 * chunk_duration  # 16-bit mono
-            log.info("Chunk audio done (%s, %.1f KB, expected ~%.0f KB)",
-                     audio_wav, wav_size / 1024, expected_size / 1024)
+            log.info("Chunk audio done (%s, %.1f KB)", audio_wav, wav_size / 1024)
             if wav_size < expected_size * 0.5:
                 log.warning("Audio WAV is too short! Got %.1f KB, expected ~%.0f KB",
                             wav_size / 1024, expected_size / 1024)
@@ -172,7 +170,7 @@ def record_chunk(
             str(output_file),
         ]
 
-    log.info("Mux command: %s", " ".join(mux_cmd))
+    log.debug("Mux command: %s", " ".join(mux_cmd))
     mux_result = subprocess.run(
         mux_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=120,
     )
@@ -182,9 +180,8 @@ def record_chunk(
         video_h264.unlink(missing_ok=True)
         audio_wav.unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg chunk mux failed: {mux_stderr[:500]}")
-    else:
-        if mux_stderr:
-            log.info("Mux stderr: %s", mux_stderr[-500:])
+    elif mux_stderr:
+        log.debug("Mux stderr: %s", mux_stderr[-300:])
 
     video_h264.unlink(missing_ok=True)
     audio_wav.unlink(missing_ok=True)
