@@ -134,10 +134,14 @@ def record_chunk(
 
     # Mux
     if has_audio and audio_wav.exists():
+        audio_filters = []
+        if config.AUDIO_GAIN_DB:
+            audio_filters.append(f"volume={config.AUDIO_GAIN_DB}dB")
+        af_args = ["-af", ",".join(audio_filters)] if audio_filters else []
         mux_cmd = [
             "ffmpeg", "-y",
             "-i", str(video_h264), "-i", str(audio_wav),
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "64k",
+            "-c:v", "copy", *af_args, "-c:a", "aac", "-b:a", "64k",
             "-shortest", "-movflags", "+faststart",
             str(output_file),
         ]
