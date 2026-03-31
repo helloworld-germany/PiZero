@@ -145,6 +145,7 @@ def record_chunk(
         af_filter = f"volume={config.AUDIO_GAIN_DB}dB" if config.AUDIO_GAIN_DB else None
         mux_cmd = [
             "ffmpeg", "-y",
+            "-fflags", "+genpts",   # generate timestamps for raw H.264
             "-i", str(video_h264),
             "-i", str(audio_wav),
             "-map", "0:v",          # video from first input
@@ -152,7 +153,6 @@ def record_chunk(
             "-c:v", "copy",
             *((["-af", af_filter] if af_filter else [])),
             "-c:a", "aac", "-b:a", "64k",
-            "-shortest",
             "-movflags", "+faststart",
             str(output_file),
         ]
