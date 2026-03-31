@@ -16,7 +16,7 @@ from . import config
 log = logging.getLogger(__name__)
 
 _UPLOAD_TIMEOUT_S = 120
-_FINISH_TIMEOUT_S = 30
+_FINISH_TIMEOUT_S = 60
 
 
 def upload_recording(master_session_id: str, file_path: Path) -> dict:

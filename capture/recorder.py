@@ -90,9 +90,22 @@ def record_chunk(
             "-d", str(chunk_duration),
             str(audio_wav),
         ]
-        audio_proc = subprocess.Popen(
-            audio_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-        )
+        # Retry if ALSA device is still busy from previous chunk
+        for attempt in range(5):
+            audio_proc = subprocess.Popen(
+                audio_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            )
+            # Give arecord a moment to fail on device-busy
+            time.sleep(0.3)
+            if audio_proc.poll() is None:
+                break  # still running = successfully opened device
+            stderr = audio_proc.stderr.read().decode(errors="replace").strip()
+            log.warning("arecord attempt %d failed: %s", attempt + 1, stderr[:200])
+            audio_proc = None
+            time.sleep(0.5)
+        if audio_proc is None:
+            log.error("Could not open audio device after 5 attempts")
+            has_audio = False
 
     # Video
     from picamera2.encoders import H264Encoder
@@ -144,6 +157,9 @@ def record_chunk(
                 log.warning("Audio WAV is too short! Got %.1f KB, expected ~%.0f KB",
                             wav_size / 1024, expected_size / 1024)
                 has_audio = False
+
+        # Small delay to let ALSA device fully release before next chunk
+        time.sleep(0.3)
 
     # Mux
     if has_audio and audio_wav.exists():
