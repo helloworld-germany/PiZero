@@ -254,7 +254,8 @@ def _run_cycle(picam2):
             # Keep file for retry; end this session
             break
 
-        output_file.unlink(missing_ok=True)
+        # Keep MP4 in capture dir for diagnostics
+        log.info("Keeping %s for diagnostics", output_file)
         chunk_index += 1
 
         # Smart timeout: backend can signal stop

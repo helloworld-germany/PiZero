@@ -166,5 +166,21 @@ def record_chunk(
     video_h264.unlink(missing_ok=True)
     audio_wav.unlink(missing_ok=True)
 
+    # Verify the output has audio
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a",
+             "-show_entries", "stream=codec_name,duration,bit_rate",
+             "-of", "csv=p=0", str(output_file)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10,
+        )
+        audio_info = probe.stdout.decode().strip()
+        if audio_info:
+            log.info("Chunk audio verified: %s", audio_info)
+        else:
+            log.warning("Chunk has NO audio stream!")
+    except Exception as exc:
+        log.debug("ffprobe check skipped: %s", exc)
+
     log.info("Chunk ready: %s (%.1f KB)", output_file, output_file.stat().st_size / 1024)
     return output_file
