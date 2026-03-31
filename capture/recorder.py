@@ -77,18 +77,20 @@ def record_chunk(
 
     log.info("Chunk capture %ds  audio=%s", chunk_duration, audio_device or "(none)")
 
-    # Audio
+    # Audio – use arecord (more reliable than ffmpeg ALSA input on I2S drivers)
     audio_proc = None
     has_audio = audio_device is not None
     if has_audio:
         audio_cmd = [
-            "ffmpeg", "-y",
-            "-f", "alsa", "-ac", "1",
-            "-ar", str(config.AUDIO_SAMPLE_RATE),
-            "-i", audio_device,
-            "-t", str(chunk_duration),
+            "arecord",
+            "-D", audio_device,
+            "-f", "S16_LE",
+            "-r", str(config.AUDIO_SAMPLE_RATE),
+            "-c", "1",
+            "-d", str(chunk_duration),
             str(audio_wav),
         ]
+        log.info("Audio command: %s", " ".join(audio_cmd))
         audio_proc = subprocess.Popen(
             audio_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
         )
@@ -127,17 +129,22 @@ def record_chunk(
             log.warning("Audio process did not exit in time – killing")
             audio_proc.kill()
             audio_proc.wait(timeout=5)
+        # Always log audio stderr for diagnostics
+        audio_stderr = audio_proc.stderr.read().decode(errors="replace") if audio_proc.stderr else ""
+        if audio_stderr:
+            log.info("Audio capture stderr: %s", audio_stderr.strip()[-800:])
+
         if audio_proc.returncode not in (0, -15):  # -15 = SIGTERM
             log.warning("Audio process exited with code %d", audio_proc.returncode)
-            stderr_out = audio_proc.stderr.read().decode(errors="replace") if audio_proc.stderr else ""
-            if stderr_out:
-                log.warning("Audio stderr: %s", stderr_out[-500:])
             has_audio = False
         else:
             wav_size = audio_wav.stat().st_size if audio_wav.exists() else 0
-            log.info("Chunk audio done (%s, %.1f KB)", audio_wav, wav_size / 1024)
-            if wav_size < 1000:
-                log.warning("Audio WAV is suspiciously small (%d bytes) – likely empty", wav_size)
+            expected_size = config.AUDIO_SAMPLE_RATE * 2 * chunk_duration  # 16-bit mono
+            log.info("Chunk audio done (%s, %.1f KB, expected ~%.0f KB)",
+                     audio_wav, wav_size / 1024, expected_size / 1024)
+            if wav_size < expected_size * 0.5:
+                log.warning("Audio WAV is too short! Got %.1f KB, expected ~%.0f KB",
+                            wav_size / 1024, expected_size / 1024)
                 has_audio = False
 
     # Mux
