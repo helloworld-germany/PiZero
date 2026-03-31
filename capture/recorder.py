@@ -142,15 +142,18 @@ def record_chunk(
 
     # Mux
     if has_audio and audio_wav.exists():
-        audio_filters = []
-        if config.AUDIO_GAIN_DB:
-            audio_filters.append(f"volume={config.AUDIO_GAIN_DB}dB")
-        af_args = ["-af", ",".join(audio_filters)] if audio_filters else []
+        af_filter = f"volume={config.AUDIO_GAIN_DB}dB" if config.AUDIO_GAIN_DB else None
         mux_cmd = [
             "ffmpeg", "-y",
-            "-i", str(video_h264), "-i", str(audio_wav),
-            "-c:v", "copy", *af_args, "-c:a", "aac", "-b:a", "64k",
-            "-shortest", "-movflags", "+faststart",
+            "-i", str(video_h264),
+            "-i", str(audio_wav),
+            "-map", "0:v",          # video from first input
+            "-map", "1:a",          # audio from second input
+            "-c:v", "copy",
+            *((["-af", af_filter] if af_filter else [])),
+            "-c:a", "aac", "-b:a", "64k",
+            "-shortest",
+            "-movflags", "+faststart",
             str(output_file),
         ]
     else:
@@ -161,20 +164,19 @@ def record_chunk(
             str(output_file),
         ]
 
-    log.debug("Mux command: %s", " ".join(mux_cmd))
+    log.info("Mux command: %s", " ".join(mux_cmd))
     mux_result = subprocess.run(
         mux_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=120,
     )
     mux_stderr = mux_result.stderr.decode(errors="replace")
     if mux_result.returncode != 0:
-        log.error("Chunk mux failed (%d): %s", mux_result.returncode, mux_stderr)
+        log.error("Chunk mux failed (%d): %s", mux_result.returncode, mux_stderr[-500:])
         video_h264.unlink(missing_ok=True)
         audio_wav.unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg chunk mux failed: {mux_stderr[:500]}")
     else:
-        # Log stderr even on success – ffmpeg warnings reveal dropped streams
         if mux_stderr:
-            log.debug("Mux stderr: %s", mux_stderr[-500:])
+            log.info("Mux stderr: %s", mux_stderr[-500:])
 
     video_h264.unlink(missing_ok=True)
     audio_wav.unlink(missing_ok=True)
