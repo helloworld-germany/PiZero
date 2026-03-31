@@ -104,14 +104,13 @@ def _try_i2s() -> str | None:
     dev = config.I2S_AUDIO_DEVICE
     # plughw: handles ALSA format/rate conversion automatically
     plug_dev = dev.replace("hw:", "plughw:") if dev.startswith("hw:") else dev
-    # Probe plughw: first (more forgiving), then raw hw:
-    if _alsa_device_available(plug_dev):
-        log.info("I2S audio device available: %s (using %s)", dev, plug_dev)
+    # For I2S (especially googlevoicehat driver), zero-length arecord probes
+    # are unreliable.  If the user explicitly enabled I2S and a capture card
+    # exists, trust the config and return the plughw: device.
+    if _any_capture_card():
+        log.info("I2S mic enabled, capture card found – using %s", plug_dev)
         return plug_dev
-    if plug_dev != dev and _alsa_device_available(dev):
-        log.info("I2S audio device available: %s", dev)
-        return plug_dev  # still use plughw: for ffmpeg compatibility
-    log.warning("I2S audio device '%s' not available", dev)
+    log.warning("I2S mic enabled but no capture card found")
     return None
 
 
