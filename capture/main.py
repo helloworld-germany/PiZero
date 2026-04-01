@@ -18,6 +18,7 @@ Usage:
 
 import logging
 import os
+import queue
 import signal
 import subprocess
 import sys
@@ -214,6 +215,34 @@ def _run_cycle(picam2):
     session_start = time.monotonic()
     chunk_index = 0
 
+    # ── Background upload worker (gapless: record next while uploading) ──
+    upload_q = queue.Queue()
+    upload_error = threading.Event()
+
+    def _upload_worker():
+        while True:
+            item = upload_q.get()
+            if item is None:          # poison pill → drain complete
+                upload_q.task_done()
+                break
+            fpath, idx = item
+            try:
+                resp = upload_recording(master_session_id, fpath)
+                fpath.unlink(missing_ok=True)
+                action = resp.get("action", "continue") if isinstance(resp, dict) else "continue"
+                if action == "stop":
+                    log.info("Backend requested stop – ending session")
+                    _stop_event.set()
+            except Exception:
+                log.exception("Chunk %d upload failed", idx)
+                upload_error.set()
+                _stop_event.set()      # stop recording on upload failure
+            finally:
+                upload_q.task_done()
+
+    upload_thread = threading.Thread(target=_upload_worker, daemon=True)
+    upload_thread.start()
+
     while not _shutdown and not _stop_event.is_set() and not _halt_requested.is_set():
         # Hard timeout check
         elapsed = time.monotonic() - session_start
@@ -243,25 +272,10 @@ def _run_cycle(picam2):
         if output_file is None:
             break
 
-        # Upload chunk immediately
-        log.info("── UPLOAD chunk %d ──", chunk_index)
-        try:
-            resp = upload_recording(master_session_id, output_file)
-        except Exception:
-            log.exception("Chunk %d upload failed", chunk_index)
-            led.error_flash()
-            buzzer.error_beep()
-            # Keep file for retry; end this session
-            break
-
-        output_file.unlink(missing_ok=True)
+        # Queue chunk for background upload – next recording starts immediately
+        log.info("── QUEUED chunk %d for upload ──", chunk_index)
+        upload_q.put((output_file, chunk_index))
         chunk_index += 1
-
-        # Smart timeout: backend can signal stop
-        action = resp.get("action", "continue") if isinstance(resp, dict) else "continue"
-        if action == "stop":
-            log.info("Backend requested stop – ending session")
-            break
 
         # Without button, record only one chunk (original single-shot behavior)
         if not config.USE_BUTTON:
@@ -269,6 +283,17 @@ def _run_cycle(picam2):
             break
 
     picam2.stop()
+
+    # ── Drain pending uploads before finishing session ─────────────
+    pending = upload_q.qsize()
+    if pending:
+        log.info("Waiting for %d pending upload(s) …", pending)
+    upload_q.put(None)             # poison pill
+    upload_thread.join(timeout=300)
+
+    if upload_error.is_set():
+        led.error_flash()
+        buzzer.error_beep()
 
     # ── FINISH SESSION ────────────────────────────────────────────
     log.info("── FINISH ──")
