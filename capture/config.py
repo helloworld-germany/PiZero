@@ -86,6 +86,12 @@ HARD_TIMEOUT_S = int(os.environ.get("HARD_TIMEOUT_S", "1800"))  # 30 minutes
 PAUSE_IDLE_TIMEOUT_S = int(os.environ.get("PAUSE_IDLE_TIMEOUT_S", "60"))  # auto-end session if paused this long
 
 # ---------------------------------------------------------------------------
+# Debug
+# ---------------------------------------------------------------------------
+DEBUG_SAVE_CHUNKS = os.environ.get("DEBUG_SAVE_CHUNKS", "false").lower() in ("1", "true", "yes")
+DEBUG_SAVE_DIR = Path(os.environ.get("DEBUG_SAVE_DIR", str(Path.home() / "test-captures")))
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")

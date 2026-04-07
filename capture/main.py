@@ -139,9 +139,10 @@ def _on_vlong_press():
 # ---------------------------------------------------------------------------
 
 def _cleanup_stale_chunks():
-    """Remove leftover .mp4 files from a previous crash to free RAM disk space."""
+    """Remove leftover files from a previous crash to free RAM disk space."""
     try:
-        stale = list(config.CAPTURE_DIR.glob("chunk-*.mp4"))
+        stale = list(config.CAPTURE_DIR.glob("chunk-*.mp4")) + \
+                list(config.CAPTURE_DIR.glob("raw-*.*"))
         if stale:
             log.warning("Removing %d stale chunk(s) from previous run", len(stale))
             for f in stale:
@@ -252,10 +253,13 @@ def _run_cycle():
                 break
             fpath, idx = item
             try:
-                # Apply audio gain boost in background (parallel with next recording)
-                if config.AUDIO_GAIN_DB and config.AUDIO_GAIN_DB != 0:
-                    from .recorder import _apply_audio_gain
-                    fpath = _apply_audio_gain(fpath, config.AUDIO_GAIN_DB)
+                # Save a debug copy before upload
+                if config.DEBUG_SAVE_CHUNKS:
+                    import shutil
+                    save_dir = config.DEBUG_SAVE_DIR / master_session_id
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(fpath, save_dir / fpath.name)
+                    log.info("Debug copy saved: %s", save_dir / fpath.name)
                 resp = upload_recording(master_session_id, fpath)
                 fpath.unlink(missing_ok=True)
                 action = resp.get("action", "continue") if isinstance(resp, dict) else "continue"

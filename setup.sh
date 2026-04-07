@@ -18,7 +18,7 @@ sudo apt-get update -qq
 sudo apt-get install -y -qq \
     python3-pip python3-venv \
     python3-picamera2 \
-    rpicam-apps \
+    rpicam-apps-core \
     libzbar0 \
     alsa-utils
 
