@@ -35,6 +35,34 @@ def _ensure_capture_dir() -> Path:
     return config.CAPTURE_DIR
 
 
+def _apply_audio_gain(input_file: Path, gain_db: int) -> Path:
+    """Boost audio volume by *gain_db* dB.  Copies video stream, re-encodes audio only."""
+    boosted = input_file.with_suffix(".boost.mp4")
+    cmd = [
+        "ffmpeg", "-y", "-v", "error",
+        "-i", str(input_file),
+        "-c:v", "copy",
+        "-af", f"volume={gain_db}dB",
+        "-c:a", "aac", "-b:a", "64k",
+        str(boosted),
+    ]
+    log.debug("Audio gain command: %s", " ".join(cmd))
+    try:
+        subprocess.run(cmd, timeout=60, check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        input_file.unlink(missing_ok=True)
+        boosted.rename(input_file)
+        log.info("Audio gain +%d dB applied", gain_db)
+    except subprocess.CalledProcessError as exc:
+        log.warning("Audio gain failed (keeping original): %s",
+                    exc.stderr.decode(errors="replace")[-300:] if exc.stderr else exc)
+        boosted.unlink(missing_ok=True)
+    except Exception as exc:
+        log.warning("Audio gain skipped: %s", exc)
+        boosted.unlink(missing_ok=True)
+    return input_file
+
+
 def record_chunk(
     chunk_duration: int | None = None,
     stop_event: threading.Event | None = None,
@@ -121,6 +149,10 @@ def record_chunk(
                 log.warning("Chunk has NO audio stream!")
         except Exception as exc:
             log.debug("ffprobe check skipped: %s", exc)
+
+    # Apply audio gain boost (I2S MEMS mics are very quiet without this)
+    if audio_device and config.AUDIO_GAIN_DB and config.AUDIO_GAIN_DB != 0:
+        output_file = _apply_audio_gain(output_file, config.AUDIO_GAIN_DB)
 
     log.info("Chunk ready: %s (%.1f KB)", output_file, output_file.stat().st_size / 1024)
     return output_file

@@ -41,6 +41,7 @@ QR_SCAN_FPS = int(os.environ.get("QR_SCAN_FPS", "15"))
 # Audio device (ALSA hw id, e.g. "hw:1,0" for USB mic)
 AUDIO_DEVICE = os.environ.get("AUDIO_DEVICE", "default")
 AUDIO_SAMPLE_RATE = int(os.environ.get("AUDIO_SAMPLE_RATE", "44100"))
+AUDIO_GAIN_DB = int(os.environ.get("AUDIO_GAIN_DB", "20"))  # post-capture gain boost (0 = off)
 
 # ---------------------------------------------------------------------------
 # Paths
