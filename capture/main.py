@@ -254,12 +254,18 @@ def _run_cycle():
                 break
             raw_video, raw_audio, idx = item
             try:
-                # Mux raw files into .mp4 (runs in background, parallel with next recording)
-                output = raw_video.with_suffix(".mp4")
-                gain = config.AUDIO_GAIN_DB if raw_audio else 0
-                _mux_av(raw_video, raw_audio, output, gain_db=gain)
-                log.info("Chunk %d muxed: %s (%.1f KB)", idx, output.name,
-                         output.stat().st_size / 1024)
+                if raw_audio:
+                    # Mux raw files into .mp4 (parallel with next recording)
+                    output = raw_video.with_suffix(".mp4")
+                    gain = config.AUDIO_GAIN_DB
+                    _mux_av(raw_video, raw_audio, output, gain_db=gain)
+                    log.info("Chunk %d muxed: %s (%.1f KB)", idx, output.name,
+                             output.stat().st_size / 1024)
+                else:
+                    # No audio – rpicam-vid already produced mp4 directly
+                    output = raw_video
+                    log.info("Chunk %d ready (video-only): %s (%.1f KB)", idx,
+                             output.name, output.stat().st_size / 1024)
                 # Save a debug copy before upload
                 if config.DEBUG_SAVE_CHUNKS:
                     import shutil

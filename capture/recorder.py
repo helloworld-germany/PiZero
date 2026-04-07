@@ -95,7 +95,14 @@ def record_chunk(
 
     log.info("Chunk capture %ds  audio=%s", chunk_duration, audio_device or "(none)")
 
-    # ── Start rpicam-vid (video only, raw H.264) ──────────────────
+    # Output format depends on whether we have audio to mux later
+    if audio_device:
+        raw_video = cap_dir / f"raw-{ts}.h264"
+    else:
+        raw_video = cap_dir / f"chunk-{ts}.mp4"   # direct mp4 – no ffmpeg needed
+    raw_audio = cap_dir / f"raw-{ts}.wav"
+
+    # ── Start rpicam-vid ──────────────────────────────────────────
     vid_cmd = [
         "rpicam-vid",
         "-t", str(chunk_duration * 1000),
