@@ -108,23 +108,67 @@ def beep(duration: float = 0.15):
     _buzz_off()
 
 
+def _play_tone(freq: int, duration: float = 0.15):
+    """Play a single tone at the given frequency (PWM only, else plain beep)."""
+    if not _enabled:
+        return
+    if _is_tonal:
+        _buzzer.frequency = freq
+    _buzz_on()
+    time.sleep(duration)
+    _buzz_off()
+
+
+# Major chord tones (C5–E5–G5)
+_CHORD_LOW = 523    # C5
+_CHORD_MID = 659    # E5
+_CHORD_HIGH = 784   # G5
+
+
+def chord_up():
+    """Three tones low→high (major chord ascending). System ready."""
+    if not _enabled:
+        return
+    _play_tone(_CHORD_LOW, 0.12)
+    time.sleep(0.06)
+    _play_tone(_CHORD_MID, 0.12)
+    time.sleep(0.06)
+    _play_tone(_CHORD_HIGH, 0.18)
+    # Restore default frequency
+    if _is_tonal:
+        _buzzer.frequency = config.BUZZER_FREQUENCY
+
+
+def chord_down():
+    """Three tones high→low (major chord descending). Shutdown."""
+    if not _enabled:
+        return
+    _play_tone(_CHORD_HIGH, 0.12)
+    time.sleep(0.06)
+    _play_tone(_CHORD_MID, 0.12)
+    time.sleep(0.06)
+    _play_tone(_CHORD_LOW, 0.18)
+    if _is_tonal:
+        _buzzer.frequency = config.BUZZER_FREQUENCY
+
+
 def double_beep():
-    """Two quick beeps – upload complete / success."""
+    """Two quick beeps."""
     beep(0.1)
     time.sleep(0.1)
     beep(0.1)
 
 
-def long_beep(duration: float = 0.6):
-    """One long beep – session ended manually."""
-    beep(duration)
-
-
 def triple_beep():
-    """Three rapid beeps – shutdown sequence."""
+    """Three quick beeps – end session."""
     for _ in range(3):
         beep(0.08)
         time.sleep(0.08)
+
+
+def long_beep(duration: float = 0.6):
+    """One long beep – session ended manually."""
+    beep(duration)
 
 
 def error_beep():

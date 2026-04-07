@@ -29,7 +29,7 @@ from . import config
 from . import led
 from . import buzzer
 from . import button
-from .camera import create_camera, configure_qr_mode, configure_capture_mode
+from .camera import create_camera, configure_qr_mode
 from .qr_scanner import run_scanner
 from .recorder import record_chunk
 from .uploader import upload_recording, finish_session, connect_session
@@ -100,22 +100,25 @@ def _stop_pause_pulse():
 
 
 def _on_short_press():
-    """Toggle pause / resume."""
+    """Toggle pause / resume.  Ends current chunk; the loop waits before starting the next."""
     if _pause_event.is_set():
         log.info("Button: RESUME")
         _pause_event.clear()
         _stop_pause_pulse()
+        buzzer.beep()
         led.on()
     else:
-        log.info("Button: PAUSE")
+        log.info("Button: PAUSE (ending current chunk)")
         _pause_event.set()
-        buzzer.double_beep()
+        _stop_event.set()       # gracefully end current rpicam-vid chunk
+        buzzer.beep()
         _start_pause_pulse()
 
 
 def _on_long_press():
     """End session manually."""
     log.info("Button: END SESSION")
+    buzzer.triple_beep()
     _stop_event.set()
     _pause_event.clear()
     _stop_pause_pulse()
@@ -124,8 +127,7 @@ def _on_long_press():
 def _on_vlong_press():
     """Request safe shutdown (sudo halt)."""
     log.info("Button: SHUTDOWN requested")
-    buzzer.triple_beep()
-    led.blink(3, 0.15)
+    buzzer.chord_down()
     led.off()
     _halt_requested.set()
     _stop_event.set()
@@ -186,6 +188,7 @@ def _run_cycle(picam2):
     # ── STATE 1: IDLE – scan for QR ───────────────────────────────
     log.info("── IDLE ── scanning for QR code …")
     led.idle_blink()
+    buzzer.chord_up()
     configure_qr_mode(picam2)
 
     # Reset session-scoped events
@@ -210,7 +213,6 @@ def _run_cycle(picam2):
     log.info("── CAPTURE ── chunked recording (chunk=%ds, hard_timeout=%ds)",
              config.RECORD_DURATION_S, config.HARD_TIMEOUT_S)
     led.on()
-    configure_capture_mode(picam2)
 
     session_start = time.monotonic()
     chunk_index = 0
@@ -255,12 +257,13 @@ def _run_cycle(picam2):
         if chunk_dur <= 0:
             break
 
-        # Record one chunk
+        # Record one chunk (pause ends chunk early via _stop_event;
+        # the while loop starts a new chunk with remaining time)
+        _pause_event.clear()
+        _stop_event.clear()
         try:
             output_file = record_chunk(
-                picam2,
                 chunk_duration=chunk_dur,
-                pause_event=_pause_event,
                 stop_event=_stop_event,
             )
         except Exception:
@@ -276,6 +279,17 @@ def _run_cycle(picam2):
         log.info("── QUEUED chunk %d for upload ──", chunk_index)
         upload_q.put((output_file, chunk_index))
         chunk_index += 1
+
+        # Wait while paused (session timer keeps ticking)
+        pause_start = time.monotonic()
+        while _pause_event.is_set() and not _shutdown and not _halt_requested.is_set():
+            if time.monotonic() - pause_start >= config.PAUSE_IDLE_TIMEOUT_S:
+                log.info("Pause idle timeout (%ds) – ending session", config.PAUSE_IDLE_TIMEOUT_S)
+                _pause_event.clear()
+                _stop_event.set()
+                _stop_pause_pulse()
+                break
+            time.sleep(0.25)
 
         # Without button, record only one chunk (original single-shot behavior)
         if not config.USE_BUTTON:
@@ -302,10 +316,6 @@ def _run_cycle(picam2):
     except Exception:
         log.exception("Finish-session failed (chunks were uploaded)")
 
-    if _stop_event.is_set() and not _halt_requested.is_set():
-        buzzer.long_beep()
-    else:
-        buzzer.double_beep()
     led.blink(2, 0.3)
     led.off()
 

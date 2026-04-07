@@ -1,18 +1,15 @@
 """
-High-performance video + audio capture with chunked recording.
+Video + audio capture using rpicam-vid native hardware muxing.
 
-Uses picamera2 for H.264 video and ffmpeg for ALSA audio, then muxes them
-into a single .mp4 file that the vidaugment backend accepts.
+rpicam-vid (Bookworm rpicam-apps) handles H.264 encoding, ALSA audio
+capture, and mp4 container muxing in a single native binary with
+near-zero CPU overhead.
 
-Supports:
-  - Chunked recording (RECORD_DURATION_S per chunk)
-  - Pause / resume via an external threading.Event
-  - Audio device selection via mic.py (I2S / ALSA / auto)
-  - Graceful fallback to video-only when no audio device is found
+Microphone is configurable via AUDIO_DEVICE (supports USB mic, I2S, etc.).
 """
 
 import logging
-import shutil
+import signal as _signal
 import subprocess
 import time
 import threading
@@ -38,191 +35,91 @@ def _ensure_capture_dir() -> Path:
     return config.CAPTURE_DIR
 
 
-def record(picam2, pause_event: threading.Event | None = None) -> Path:
-    """
-    Record RECORD_DURATION_S seconds of synchronised video + audio.
-
-    Thin wrapper around record_chunk() for backward compatibility.
-    """
-    return record_chunk(
-        picam2,
-        chunk_duration=config.RECORD_DURATION_S,
-        pause_event=pause_event,
-    )
-
-
 def record_chunk(
-    picam2,
     chunk_duration: int | None = None,
-    pause_event: threading.Event | None = None,
     stop_event: threading.Event | None = None,
 ) -> Path | None:
-    """
-    Record a single chunk of *chunk_duration* seconds (default RECORD_DURATION_S).
+    """Record a single chunk using rpicam-vid with hardware H.264 + audio muxing.
 
-    Like record(), but designed to be called in a loop.  Returns None if
-    *stop_event* fires before the chunk finishes (caller should upload any
-    partial data separately).
-
-    *picam2* must already be configured and **started** in capture mode.
+    Returns the output .mp4 path, or None if *stop_event* fires before any
+    data is captured.  On pause (stop_event set mid-chunk), the current chunk
+    is gracefully finalised via SIGINT so the mp4 is valid.
     """
     chunk_duration = chunk_duration or config.RECORD_DURATION_S
     cap_dir = _ensure_capture_dir()
     ts = int(time.time() * 1000)
-    video_h264 = cap_dir / f"chunk-{ts}.h264"
-    audio_wav = cap_dir / f"chunk-{ts}.wav"
     output_file = cap_dir / f"chunk-{ts}.mp4"
-
     audio_device = _resolve_audio_device()
 
     log.info("Chunk capture %ds  audio=%s", chunk_duration, audio_device or "(none)")
 
-    # Audio – use arecord (more reliable than ffmpeg ALSA input on I2S drivers)
-    audio_proc = None
-    has_audio = audio_device is not None
-    if has_audio:
-        audio_cmd = [
-            "arecord",
-            "-D", audio_device,
-            "-f", "S16_LE",
-            "-r", str(config.AUDIO_SAMPLE_RATE),
-            "-c", "1",
-            "-d", str(chunk_duration),
-            str(audio_wav),
-        ]
-        # Retry if ALSA device is still busy from previous chunk
-        for attempt in range(5):
-            audio_proc = subprocess.Popen(
-                audio_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            )
-            # Give arecord a moment to fail on device-busy
-            time.sleep(0.3)
-            if audio_proc.poll() is None:
-                break  # still running = successfully opened device
-            stderr = audio_proc.stderr.read().decode(errors="replace").strip()
-            log.warning("arecord attempt %d failed: %s", attempt + 1, stderr[:200])
-            audio_proc = None
-            time.sleep(0.5)
-        if audio_proc is None:
-            log.error("Could not open audio device after 5 attempts")
-            has_audio = False
-
-    # Video
-    from picamera2.encoders import H264Encoder
-    from picamera2.outputs import FileOutput
-
-    encoder = H264Encoder(bitrate=2_000_000)
-    file_output = FileOutput(str(video_h264))
-    picam2.start_encoder(encoder, file_output)
-
-    elapsed = 0.0
-    step = 0.25
-    stopped_early = False
-    while elapsed < chunk_duration:
-        if stop_event and stop_event.is_set():
-            stopped_early = True
-            break
-        if pause_event and pause_event.is_set():
-            time.sleep(step)
-            continue
-        time.sleep(step)
-        elapsed += step
-
-    picam2.stop_encoder(encoder)
-    log.info("Chunk video done (%s)", video_h264)
-
-    # Terminate audio early if we stopped before full duration
-    if audio_proc is not None:
-        if stopped_early:
-            audio_proc.terminate()
-        try:
-            audio_proc.wait(timeout=chunk_duration + 10)
-        except subprocess.TimeoutExpired:
-            log.warning("Audio process did not exit in time – killing")
-            audio_proc.kill()
-            audio_proc.wait(timeout=5)
-        # Always log audio stderr for diagnostics
-        audio_stderr = audio_proc.stderr.read().decode(errors="replace") if audio_proc.stderr else ""
-        if audio_stderr:
-            log.debug("Audio capture stderr: %s", audio_stderr.strip()[-500:])
-
-        # arecord returns -15 (SIGTERM) or 1 when terminated early – both OK
-        acceptable = (0, -15) if not stopped_early else (0, 1, -15, -2)
-        if audio_proc.returncode not in acceptable:
-            log.warning("Audio process exited with code %d", audio_proc.returncode)
-            has_audio = False
-        else:
-            wav_size = audio_wav.stat().st_size if audio_wav.exists() else 0
-            if stopped_early:
-                # Any data is good when stopped early by button
-                min_size = 1000  # at least ~0.01s of audio
-                log.info("Chunk audio done (early stop) (%s, %.1f KB)", audio_wav, wav_size / 1024)
-            else:
-                min_size = config.AUDIO_SAMPLE_RATE * 2 * chunk_duration * 0.5  # 50% of expected
-                log.info("Chunk audio done (%s, %.1f KB)", audio_wav, wav_size / 1024)
-            if wav_size < min_size:
-                log.warning("Audio WAV too small: %.1f KB", wav_size / 1024)
-                has_audio = False
-
-        # Small delay to let ALSA device fully release before next chunk
-        time.sleep(0.3)
-
-    # Mux
-    if has_audio and audio_wav.exists():
-        af_filter = f"volume={config.AUDIO_GAIN_DB}dB" if config.AUDIO_GAIN_DB else None
-        mux_cmd = [
-            "ffmpeg", "-y",
-            "-f", "h264",                   # explicit demuxer for raw H.264
-            "-framerate", str(config.VIDEO_FPS),  # tell demuxer the fps
-            "-i", str(video_h264),
-            "-i", str(audio_wav),
-            "-map", "0:v",          # video from first input
-            "-map", "1:a",          # audio from second input
-            "-c:v", "copy",
-            *((["-af", af_filter] if af_filter else [])),
-            "-c:a", "aac", "-b:a", "64k",
-            "-movflags", "+faststart",
-            str(output_file),
-        ]
-    else:
-        mux_cmd = [
-            "ffmpeg", "-y",
-            "-i", str(video_h264),
-            "-c:v", "copy", "-an", "-movflags", "+faststart",
-            str(output_file),
+    cmd = [
+        "rpicam-vid",
+        "-t", str(chunk_duration * 1000),   # duration in ms
+        "--width", str(config.VIDEO_WIDTH),
+        "--height", str(config.VIDEO_HEIGHT),
+        "--framerate", str(config.VIDEO_FPS),
+        "--bitrate", "2000000",
+        "--codec", "libav",
+        "--libav-format", "mp4",
+        "-n",                                # no preview (headless)
+        "-o", str(output_file),
+    ]
+    if audio_device:
+        cmd += [
+            "--libav-audio",
+            "--audio-device", audio_device,
+            "--audio-codec", "aac",
+            "--audio-bitrate", "64000",
+            "--audio-samplerate", str(config.AUDIO_SAMPLE_RATE),
         ]
 
-    log.debug("Mux command: %s", " ".join(mux_cmd))
-    mux_result = subprocess.run(
-        mux_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=120,
+    log.debug("rpicam-vid command: %s", " ".join(cmd))
+
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
     )
-    mux_stderr = mux_result.stderr.decode(errors="replace")
-    if mux_result.returncode != 0:
-        log.error("Chunk mux failed (%d): %s", mux_result.returncode, mux_stderr[-500:])
-        video_h264.unlink(missing_ok=True)
-        audio_wav.unlink(missing_ok=True)
-        raise RuntimeError(f"ffmpeg chunk mux failed: {mux_stderr[:500]}")
-    elif mux_stderr:
-        log.debug("Mux stderr: %s", mux_stderr[-300:])
 
-    video_h264.unlink(missing_ok=True)
-    audio_wav.unlink(missing_ok=True)
+    # Wait for rpicam-vid to finish, or stop_event to fire (pause / stop)
+    while proc.poll() is None:
+        if stop_event and stop_event.is_set():
+            proc.send_signal(_signal.SIGINT)   # graceful stop → valid mp4
+            break
+        time.sleep(0.25)
 
-    # Verify the output has audio
     try:
-        probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "a",
-             "-show_entries", "stream=codec_name,duration,bit_rate",
-             "-of", "csv=p=0", str(output_file)],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10,
-        )
-        audio_info = probe.stdout.decode().strip()
-        if audio_info:
-            log.info("Chunk audio verified: %s", audio_info)
-        else:
-            log.warning("Chunk has NO audio stream!")
-    except Exception as exc:
-        log.debug("ffprobe check skipped: %s", exc)
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        log.warning("rpicam-vid did not exit – killing")
+        proc.kill()
+        proc.wait(timeout=5)
+
+    stderr = proc.stderr.read().decode(errors="replace")
+    if stderr:
+        log.debug("rpicam-vid stderr: %s", stderr[-500:])
+
+    if not output_file.exists() or output_file.stat().st_size < 1000:
+        log.error("rpicam-vid produced no output (rc=%d): %s",
+                  proc.returncode, stderr[-500:])
+        output_file.unlink(missing_ok=True)
+        raise RuntimeError(f"rpicam-vid capture failed: {stderr[:500]}")
+
+    # Quick audio verification
+    if audio_device:
+        try:
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "a",
+                 "-show_entries", "stream=codec_name",
+                 "-of", "csv=p=0", str(output_file)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10,
+            )
+            audio_info = probe.stdout.decode().strip()
+            if audio_info:
+                log.info("Chunk audio verified: %s", audio_info)
+            else:
+                log.warning("Chunk has NO audio stream!")
+        except Exception as exc:
+            log.debug("ffprobe check skipped: %s", exc)
 
     log.info("Chunk ready: %s (%.1f KB)", output_file, output_file.stat().st_size / 1024)
     return output_file

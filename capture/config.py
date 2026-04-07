@@ -41,12 +41,11 @@ QR_SCAN_FPS = int(os.environ.get("QR_SCAN_FPS", "15"))
 # Audio device (ALSA hw id, e.g. "hw:1,0" for USB mic)
 AUDIO_DEVICE = os.environ.get("AUDIO_DEVICE", "default")
 AUDIO_SAMPLE_RATE = int(os.environ.get("AUDIO_SAMPLE_RATE", "44100"))
-AUDIO_GAIN_DB = int(os.environ.get("AUDIO_GAIN_DB", "20"))  # software boost in dB
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-CAPTURE_DIR = Path(os.environ.get("CAPTURE_DIR", "/tmp/picapture"))
+CAPTURE_DIR = Path(os.environ.get("CAPTURE_DIR", "/run/picapture"))
 
 # ---------------------------------------------------------------------------
 # LED / GPIO feedback (optional)
@@ -59,7 +58,7 @@ LED_PIN = int(os.environ.get("LED_PIN", "17"))  # BCM numbering
 USE_BUZZER = os.environ.get("USE_BUZZER", "false").lower() in ("1", "true", "yes")
 BUZZER_PIN = int(os.environ.get("BUZZER_PIN", "23"))  # BCM 23 / physical pin 16
 BUZZER_PWM = os.environ.get("BUZZER_PWM", "true").lower() in ("1", "true", "yes")
-BUZZER_FREQUENCY = int(os.environ.get("BUZZER_FREQUENCY", "1000"))
+BUZZER_FREQUENCY = 1000  # default tone Hz (chords use their own frequencies)
 
 # ---------------------------------------------------------------------------
 # Push-button (optional hardware board)
@@ -83,6 +82,7 @@ AUDIO_BACKEND = os.environ.get("AUDIO_BACKEND", "auto")
 # Session limits
 # ---------------------------------------------------------------------------
 HARD_TIMEOUT_S = int(os.environ.get("HARD_TIMEOUT_S", "1800"))  # 30 minutes
+PAUSE_IDLE_TIMEOUT_S = int(os.environ.get("PAUSE_IDLE_TIMEOUT_S", "60"))  # auto-end session if paused this long
 
 # ---------------------------------------------------------------------------
 # Logging

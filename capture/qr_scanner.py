@@ -44,11 +44,16 @@ def extract_master_session_id(data: str) -> str | None:
 
 def scan_frame(frame):
     """Decode QR codes in a numpy frame and return a masterSessionId or None."""
-    # Convert to grayscale for faster pyzbar decoding
+    # With YUV420 from picamera2, capture_array returns a 2D array with the
+    # Y (luma/grayscale) plane in the top portion (height × width).
+    # For any format, ensure we have a 2D grayscale array for pyzbar.
     if frame.ndim == 3:
-        gray = frame[:, :, 1]  # green channel – best contrast
+        gray = frame[:, :, 0]
     else:
-        gray = frame
+        # YUV420: Y plane is the top 2/3 of the buffer (height × width)
+        # The bottom 1/3 contains interleaved U/V – crop it off
+        h = frame.shape[0] * 2 // 3
+        gray = frame[:h, :]
 
     # Try raw grayscale first (fastest path)
     results = pyzbar.decode(gray, symbols=[pyzbar.ZBarSymbol.QRCODE])

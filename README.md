@@ -80,8 +80,56 @@ All settings live in `capture/config.env` (or as environment variables):
 | `QR_SCAN_WIDTH` / `QR_SCAN_HEIGHT` | `640` / `480` | QR scanner resolution |
 | `QR_SCAN_FPS` | `5` | Idle scanner frame rate |
 | `AUDIO_DEVICE` | `default` | ALSA device (`arecord -l` to list) |
+| `CAPTURE_DIR` | `/run/picapture` | Capture directory (tmpfs RAM disk) |
 | `LED_PIN` | `17` | BCM GPIO pin for status LED |
 | `BUZZER_PIN` | `27` | BCM GPIO pin for active buzzer |
+
+## Capture
+
+Recording uses `rpicam-vid` (Bookworm rpicam-apps) with native hardware
+muxing: H.264 encoding + ALSA audio capture + mp4 container — all in one
+binary with **near-zero CPU** usage.
+
+```
+rpicam-vid --codec libav --libav-format mp4 --libav-audio \
+           --audio-device <AUDIO_DEVICE> -o output.mp4
+```
+
+The microphone is configurable via `AUDIO_DEVICE` in `capture/config.env`.
+Set it to your ALSA device (e.g. `default`, `hw:0,0` for I2S, `hw:1,0` for
+USB mic). Run `arecord -l` to list available capture devices.
+
+## Audio Hardware Configuration
+
+Depending on your audio hardware, you may need to edit `/boot/config.txt`
+(or `/boot/firmware/config.txt` on newer OS images) to enable the correct
+audio overlay. For example, to use the Google AIY Voice Hat sound card:
+
+```
+# Enable I2S audio interface
+dtparam=i2s=on
+dtoverlay=googlevoicehat-soundcard
+```
+
+After editing, reboot the Pi for changes to take effect. Use `arecord -l` to
+verify the device is detected, then set `AUDIO_DEVICE` in `capture/config.env`
+accordingly.
+
+## RAM Disk for Recordings
+
+By default, recordings are written to `/run/picapture`, a **tmpfs** RAM disk.
+This avoids SD card I/O during capture, resulting in significantly faster
+writes and reduced SD card wear. The `setup.sh` script adds the mount
+automatically via `/etc/fstab`:
+
+```
+tmpfs /run/picapture tmpfs nodev,nosuid,size=200M 0 0
+```
+
+The 200 MB size is sufficient for a single 20-second recording cycle. Files are
+uploaded and cleaned up before the next capture, so usage stays low. Since tmpfs
+lives in RAM, **data is lost on reboot** — this is fine because recordings are
+uploaded immediately after capture.
 
 ## WiFi
 

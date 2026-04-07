@@ -23,7 +23,7 @@ def configure_qr_mode(picam2):
     from libcamera import controls as libcamera_controls  # type: ignore[import-untyped]
 
     cam_config = picam2.create_video_configuration(
-        main={"size": (config.QR_SCAN_WIDTH, config.QR_SCAN_HEIGHT), "format": "RGB888"},
+        main={"size": (config.QR_SCAN_WIDTH, config.QR_SCAN_HEIGHT), "format": "YUV420"},
         buffer_count=4,
     )
     picam2.configure(cam_config)
@@ -41,26 +41,4 @@ def configure_qr_mode(picam2):
     log.info(
         "Camera in QR-scan mode (%dx%d @ %d fps)",
         config.QR_SCAN_WIDTH, config.QR_SCAN_HEIGHT, config.QR_SCAN_FPS,
-    )
-
-
-def configure_capture_mode(picam2):
-    """
-    Configure the camera for high-quality 20s video capture.
-    """
-    cam_config = picam2.create_video_configuration(
-        main={"size": (config.VIDEO_WIDTH, config.VIDEO_HEIGHT), "format": "YUV420"},
-    )
-    picam2.configure(cam_config)
-    picam2.start()
-    try:
-        picam2.set_controls({
-            "FrameRate": config.VIDEO_FPS,
-        })
-    except Exception as exc:
-        log.debug("Could not set capture frame rate: %s", exc)
-
-    log.info(
-        "Camera in capture mode (%dx%d @ %d fps)",
-        config.VIDEO_WIDTH, config.VIDEO_HEIGHT, config.VIDEO_FPS,
     )
