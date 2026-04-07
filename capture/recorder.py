@@ -41,10 +41,9 @@ def _mux_av(video_file: Path, audio_file: Path | None, output_file: Path,
             gain_db: int = 0) -> Path:
     """Mux video + audio into mp4.  Copies video, encodes audio as AAC.
 
-    Audio filter chain (broadcast-style):
+    Audio filter chain:
       1. volume      – raw gain boost for quiet I2S MEMS mics
       2. acompressor – dynamic range compression (lifts quiet, tames peaks)
-      3. loudnorm    – EBU R128 loudness normalization to -16 LUFS
     """
     cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(video_file)]
     if audio_file and audio_file.exists() and audio_file.stat().st_size > 100:
@@ -54,7 +53,6 @@ def _mux_av(video_file: Path, audio_file: Path | None, output_file: Path,
         if gain_db:
             filters.append(f"volume={gain_db}dB")
         filters.append("acompressor=threshold=-20dB:ratio=4:attack=5:release=100:makeup=6dB")
-        filters.append("loudnorm=I=-16:TP=-1.5:LRA=11")
         cmd += ["-c:v", "copy"]
         cmd += ["-af", ",".join(filters)]
         cmd += ["-c:a", "aac", "-b:a", "64k"]
@@ -82,19 +80,17 @@ def _mux_av(video_file: Path, audio_file: Path | None, output_file: Path,
 def record_chunk(
     chunk_duration: int | None = None,
     stop_event: threading.Event | None = None,
-) -> Path | None:
+) -> tuple[Path, Path | None] | None:
     """Record a single chunk: rpicam-vid (video) + arecord (audio) in parallel.
 
-    Returns the output .mp4 path, or None if *stop_event* fires before any
-    data is captured.  On pause (stop_event set mid-chunk), both processes
-    are stopped gracefully.
+    Returns ``(raw_video, raw_audio)`` paths for the caller to mux+upload
+    in a background thread, or *None* if nothing was captured.
     """
     chunk_duration = chunk_duration or config.RECORD_DURATION_S
     cap_dir = _ensure_capture_dir()
     ts = int(time.time() * 1000)
     raw_video = cap_dir / f"raw-{ts}.h264"
     raw_audio = cap_dir / f"raw-{ts}.wav"
-    output_file = cap_dir / f"chunk-{ts}.mp4"
     audio_device = _resolve_audio_device()
 
     log.info("Chunk capture %ds  audio=%s", chunk_duration, audio_device or "(none)")
@@ -162,11 +158,7 @@ def record_chunk(
         raw_audio.unlink(missing_ok=True)
         raise RuntimeError(f"rpicam-vid capture failed: {vid_stderr[:500]}")
 
-    # ── Mux video + audio (+ gain) into final mp4 ────────────────
-    gain = config.AUDIO_GAIN_DB if audio_device else 0
-    _mux_av(raw_video, raw_audio if audio_device else None, output_file,
-            gain_db=gain)
-
-    log.info("Chunk ready: %s (%.1f KB)", output_file,
-             output_file.stat().st_size / 1024)
-    return output_file
+    log.info("Chunk recorded: video=%.1f KB  audio=%.1f KB",
+             raw_video.stat().st_size / 1024,
+             raw_audio.stat().st_size / 1024 if raw_audio.exists() else 0)
+    return (raw_video, raw_audio if audio_device and raw_audio.exists() else None)

@@ -246,22 +246,29 @@ def _run_cycle():
     upload_error = threading.Event()
 
     def _upload_worker():
+        from .recorder import _mux_av
         while True:
             item = upload_q.get()
             if item is None:          # poison pill → drain complete
                 upload_q.task_done()
                 break
-            fpath, idx = item
+            raw_video, raw_audio, idx = item
             try:
+                # Mux raw files into .mp4 (runs in background, parallel with next recording)
+                output = raw_video.with_suffix(".mp4")
+                gain = config.AUDIO_GAIN_DB if raw_audio else 0
+                _mux_av(raw_video, raw_audio, output, gain_db=gain)
+                log.info("Chunk %d muxed: %s (%.1f KB)", idx, output.name,
+                         output.stat().st_size / 1024)
                 # Save a debug copy before upload
                 if config.DEBUG_SAVE_CHUNKS:
                     import shutil
                     save_dir = config.DEBUG_SAVE_DIR / master_session_id
                     save_dir.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(fpath, save_dir / fpath.name)
-                    log.info("Debug copy saved: %s", save_dir / fpath.name)
-                resp = upload_recording(master_session_id, fpath)
-                fpath.unlink(missing_ok=True)
+                    shutil.copy2(output, save_dir / output.name)
+                    log.info("Debug copy saved: %s", save_dir / output.name)
+                resp = upload_recording(master_session_id, output)
+                output.unlink(missing_ok=True)
                 action = resp.get("action", "continue") if isinstance(resp, dict) else "continue"
                 if action == "stop":
                     log.info("Backend requested stop – ending session")
@@ -293,7 +300,7 @@ def _run_cycle():
         _pause_event.clear()
         _stop_event.clear()
         try:
-            output_file = record_chunk(
+            result = record_chunk(
                 chunk_duration=chunk_dur,
                 stop_event=_stop_event,
             )
@@ -303,12 +310,14 @@ def _run_cycle():
             buzzer.error_beep()
             break
 
-        if output_file is None:
+        if result is None:
             break
 
-        # Queue chunk for background upload – next recording starts immediately
-        log.info("── QUEUED chunk %d for upload ──", chunk_index)
-        upload_q.put((output_file, chunk_index))
+        raw_video, raw_audio = result
+
+        # Queue raw files for background mux + upload – next recording starts immediately
+        log.info("── QUEUED chunk %d for mux+upload ──", chunk_index)
+        upload_q.put((raw_video, raw_audio, chunk_index))
         chunk_index += 1
 
         # Wait while paused (session timer keeps ticking)
@@ -341,17 +350,21 @@ def _run_cycle():
         buzzer.error_beep()
 
     # ── FINISH SESSION ────────────────────────────────────────────
+    # ── FINISH SESSION (fire-and-forget, don't block return to idle) ─
     log.info("── FINISH ──")
-    try:
-        finish_session(master_session_id)
-    except Exception:
-        log.exception("Finish-session failed (chunks were uploaded)")
+
+    def _finish_bg():
+        try:
+            finish_session(master_session_id)
+        except Exception:
+            log.exception("Finish-session failed (chunks were uploaded)")
+
+    threading.Thread(target=_finish_bg, daemon=True).start()
 
     led.blink(2, 0.3)
     led.off()
 
-    log.info("── CYCLE COMPLETE ── %d chunks uploaded, returning to idle in 3s", chunk_index)
-    time.sleep(3)
+    log.info("── CYCLE COMPLETE ── %d chunks uploaded, returning to idle", chunk_index)
 
 
 def _cleanup():
