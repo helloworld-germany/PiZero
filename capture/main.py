@@ -171,8 +171,6 @@ def main():
         on_long_press=_on_long_press,
         on_vlong_press=_on_vlong_press,
     )
-    picam2 = create_camera()
-
     # Clean up stale chunks from previous crash / unclean shutdown
     _cleanup_stale_chunks()
 
@@ -189,26 +187,27 @@ def main():
         while not _shutdown:
             if _halt_requested.is_set():
                 break
-            _run_cycle(picam2)
+            _run_cycle()
             if _shutdown:
                 break
     except KeyboardInterrupt:
         log.info("Interrupted")
     finally:
-        _cleanup(picam2)
+        _cleanup()
 
     if _halt_requested.is_set():
         log.info("Executing sudo halt …")
         subprocess.run(["sudo", "halt"], check=False)
 
 
-def _run_cycle(picam2):
+def _run_cycle():
     """One full idle → capture (chunked) → finish cycle."""
 
     # ── STATE 1: IDLE – scan for QR ───────────────────────────────
     log.info("── IDLE ── scanning for QR code …")
     led.idle_blink()
     buzzer.chord_up()
+    picam2 = create_camera()
     configure_qr_mode(picam2)
 
     # Reset session-scoped events
@@ -220,6 +219,8 @@ def _run_cycle(picam2):
     master_session_id = run_scanner(picam2, shutdown_check=lambda: _shutdown or _halt_requested.is_set())
     if _shutdown or _halt_requested.is_set() or not master_session_id:
         button.stop_monitor()
+        picam2.stop()
+        picam2.close()
         return
 
     # ── STATE 2: TRIGGER ──────────────────────────────────────────
@@ -228,6 +229,7 @@ def _run_cycle(picam2):
     buzzer.beep()
     connect_session(master_session_id)
     picam2.stop()
+    picam2.close()  # fully release camera so rpicam-vid can acquire it
 
     # ── STATE 3: CHUNKED CAPTURE + UPLOAD ─────────────────────────
     log.info("── CAPTURE ── chunked recording (chunk=%ds, hard_timeout=%ds)",
@@ -316,7 +318,7 @@ def _run_cycle(picam2):
             log.info("Button disabled – single-chunk mode, ending session")
             break
 
-    picam2.stop()
+    # Camera was closed for rpicam-vid – nothing to stop here
 
     # ── Drain pending uploads before finishing session ─────────────
     pending = upload_q.qsize()
@@ -343,7 +345,7 @@ def _run_cycle(picam2):
     time.sleep(3)
 
 
-def _cleanup(picam2):
+def _cleanup():
     log.info("Cleaning up …")
     button.stop_monitor()
     button.cleanup()
@@ -351,14 +353,6 @@ def _cleanup(picam2):
     led.off()
     led.cleanup()
     buzzer.cleanup()
-    try:
-        picam2.stop()
-    except Exception:
-        pass
-    try:
-        picam2.close()
-    except Exception:
-        pass
     log.info("Goodbye.")
 
 
