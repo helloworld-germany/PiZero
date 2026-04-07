@@ -39,14 +39,24 @@ def _ensure_capture_dir() -> Path:
 
 def _mux_av(video_file: Path, audio_file: Path | None, output_file: Path,
             gain_db: int = 0) -> Path:
-    """Mux video + audio into mp4.  Copies video, encodes audio as AAC with optional gain."""
+    """Mux video + audio into mp4.  Copies video, encodes audio as AAC.
+
+    Audio filter chain (broadcast-style):
+      1. volume      – raw gain boost for quiet I2S MEMS mics
+      2. acompressor – dynamic range compression (lifts quiet, tames peaks)
+      3. loudnorm    – EBU R128 loudness normalization to -16 LUFS
+    """
     cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(video_file)]
     if audio_file and audio_file.exists() and audio_file.stat().st_size > 100:
         cmd += ["-i", str(audio_file)]
-        af = f"volume={gain_db}dB" if gain_db else None
+        # Build audio filter chain
+        filters = []
+        if gain_db:
+            filters.append(f"volume={gain_db}dB")
+        filters.append("acompressor=threshold=-20dB:ratio=4:attack=5:release=100:makeup=6dB")
+        filters.append("loudnorm=I=-16:TP=-1.5:LRA=11")
         cmd += ["-c:v", "copy"]
-        if af:
-            cmd += ["-af", af]
+        cmd += ["-af", ",".join(filters)]
         cmd += ["-c:a", "aac", "-b:a", "64k"]
         cmd += ["-map", "0:v:0", "-map", "1:a:0"]
     else:
