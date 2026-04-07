@@ -204,29 +204,37 @@ if [[ ! "$test_mic" =~ ^[Nn]$ ]]; then
 
     echo "  Recording 2s from $mic_dev …"
     TEST_WAV="/tmp/picapture-mic-test.wav"
-    if arecord -D "$mic_dev" -f S16_LE -r 44100 -c 1 -d 2 "$TEST_WAV" 2>/dev/null; then
-        wav_size=$(stat -c%s "$TEST_WAV" 2>/dev/null || echo 0)
-        if [[ "$wav_size" -gt 10000 ]]; then
-            # Signal confirmation via available hardware
-            if grep -q "^USE_BUZZER=true" "$CONFIG_FILE" 2>/dev/null; then
-                "$VENV_DIR/bin/python" -c "
+    # Try multiple formats – I2S mics (e.g. INMP441/Voice HAT) often need
+    # S32_LE at 48kHz stereo, USB mics typically work with S16_LE at 44.1kHz
+    MIC_OK=false
+    for fmt in "S32_LE 48000 2" "S32_LE 16000 1" "S16_LE 16000 1" "S16_LE 44100 1"; do
+        read -r afmt arate achans <<< "$fmt"
+        if arecord -D "$mic_dev" -f "$afmt" -r "$arate" -c "$achans" -d 2 "$TEST_WAV" 2>/dev/null; then
+            wav_size=$(stat -c%s "$TEST_WAV" 2>/dev/null || echo 0)
+            if [[ "$wav_size" -gt 10000 ]]; then
+                MIC_OK=true
+                echo "  ✓ Mic OK – captured $(( wav_size / 1024 )) KB (${afmt} ${arate}Hz ${achans}ch)"
+                break
+            fi
+        fi
+    done
+    if [[ "$MIC_OK" == "true" ]]; then
+        # Signal confirmation via available hardware
+        if grep -q "^USE_BUZZER=true" "$CONFIG_FILE" 2>/dev/null; then
+            "$VENV_DIR/bin/python" -c "
 from capture import buzzer
 buzzer.setup()
 buzzer.beep(0.3)
 buzzer.cleanup()
 " 2>/dev/null
-            elif grep -q "^LED_PIN=" "$CONFIG_FILE" 2>/dev/null; then
-                "$VENV_DIR/bin/python" -c "
+        elif grep -q "^LED_PIN=" "$CONFIG_FILE" 2>/dev/null; then
+            "$VENV_DIR/bin/python" -c "
 from capture import led
 import time
 led.setup()
 led.on(); time.sleep(1.0); led.off()
 led.cleanup()
 " 2>/dev/null
-            fi
-            echo "  ✓ Mic OK – captured $(( wav_size / 1024 )) KB"
-        else
-            echo "  ⚠ Recording too small (${wav_size} bytes) – mic may not be working"
         fi
     else
         echo "  ⚠ arecord failed – check ALSA device ($mic_dev)"
