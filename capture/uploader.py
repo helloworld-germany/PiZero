@@ -7,6 +7,7 @@ Mirrors the browser app.js logic:
 """
 
 import logging
+import time
 from pathlib import Path
 
 import requests
@@ -17,14 +18,16 @@ log = logging.getLogger(__name__)
 
 _UPLOAD_TIMEOUT_S = 120
 _FINISH_TIMEOUT_S = 60
+_MAX_RETRIES = 3
+_RETRY_BACKOFF = [5, 15, 30]  # seconds between retries
 
 
 def upload_recording(master_session_id: str, file_path: Path) -> dict:
     """
     Upload *file_path* to the vidaugment backend.
 
-    Returns the JSON response payload on success.
-    Raises on HTTP or network errors.
+    Retries up to _MAX_RETRIES times with exponential backoff on network
+    errors or 5xx responses.  Raises on persistent failure.
     """
     if not config.API_BASE_URL:
         raise RuntimeError("VIDAUGMENT_API_BASE_URL is not configured")
@@ -42,26 +45,49 @@ def upload_recording(master_session_id: str, file_path: Path) -> dict:
         master_session_id,
     )
 
-    with open(file_path, "rb") as fh:
-        resp = requests.post(
-            url,
-            params=params,
-            files={"file": (filename, fh, mime)},
-            timeout=_UPLOAD_TIMEOUT_S,
-        )
+    last_exc = None
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            with open(file_path, "rb") as fh:
+                resp = requests.post(
+                    url,
+                    params=params,
+                    files={"file": (filename, fh, mime)},
+                    timeout=_UPLOAD_TIMEOUT_S,
+                )
 
-    if not resp.ok:
-        body = resp.text[:500]
-        log.error("Upload failed %d: %s", resp.status_code, body)
-        resp.raise_for_status()
+            if resp.ok:
+                payload = resp.json()
+                log.info(
+                    "Upload success – sessionId=%s  recordings=%s",
+                    payload.get("sessionId"),
+                    payload.get("masterSessionRecordingCount"),
+                )
+                return payload
 
-    payload = resp.json()
-    log.info(
-        "Upload success – sessionId=%s  recordings=%s",
-        payload.get("sessionId"),
-        payload.get("masterSessionRecordingCount"),
-    )
-    return payload
+            # Client error (4xx) — don't retry, it won't help
+            if 400 <= resp.status_code < 500:
+                body = resp.text[:500]
+                log.error("Upload failed %d (not retrying): %s", resp.status_code, body)
+                resp.raise_for_status()
+
+            # Server error (5xx) — retry
+            last_exc = requests.HTTPError(f"{resp.status_code}: {resp.text[:200]}", response=resp)
+            log.warning("Upload failed %d (attempt %d/%d)",
+                        resp.status_code, attempt + 1, _MAX_RETRIES + 1)
+
+        except requests.RequestException as exc:
+            last_exc = exc
+            log.warning("Upload error (attempt %d/%d): %s",
+                        attempt + 1, _MAX_RETRIES + 1, exc)
+
+        if attempt < _MAX_RETRIES:
+            delay = _RETRY_BACKOFF[min(attempt, len(_RETRY_BACKOFF) - 1)]
+            log.info("Retrying in %ds …", delay)
+            time.sleep(delay)
+
+    log.error("Upload failed after %d attempts", _MAX_RETRIES + 1)
+    raise last_exc
 
 
 def finish_session(master_session_id: str) -> dict:

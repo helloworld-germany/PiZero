@@ -144,13 +144,110 @@ else
     echo "  ✓ LED enabled (GPIO17)"
 fi
 
+# ── Hardware self-test ────────────────────────────────────────────
+echo ""
+echo "  ── Hardware self-test ──"
+echo ""
+
+# LED test
+if grep -q "^LED_PIN=" "$CONFIG_FILE" 2>/dev/null; then
+    read -rp "  Test LED? (will flash 10 times) [Y/n]: " test_led
+    if [[ ! "$test_led" =~ ^[Nn]$ ]]; then
+        "$VENV_DIR/bin/python" -c "
+from capture import led, config
+import time
+led.setup()
+for _ in range(10):
+    led.on(); time.sleep(0.05)
+    led.off(); time.sleep(0.05)
+led.cleanup()
+" 2>/dev/null
+        read -rp "  Did you see the LED flash? [Y/n]: " led_ok
+        if [[ "$led_ok" =~ ^[Nn]$ ]]; then
+            echo "  ⚠ Check LED wiring (GPIO17 → 330Ω → LED → GND)"
+        else
+            echo "  ✓ LED OK"
+        fi
+    fi
+fi
+
+# Buzzer test
+if grep -q "^USE_BUZZER=true" "$CONFIG_FILE" 2>/dev/null; then
+    read -rp "  Test buzzer? (will play ascending chord) [Y/n]: " test_buzzer
+    if [[ ! "$test_buzzer" =~ ^[Nn]$ ]]; then
+        "$VENV_DIR/bin/python" -c "
+from capture import buzzer
+buzzer.setup()
+buzzer.chord_up()
+buzzer.cleanup()
+" 2>/dev/null
+        read -rp "  Did you hear the chord? [Y/n]: " buzzer_ok
+        if [[ "$buzzer_ok" =~ ^[Nn]$ ]]; then
+            echo "  ⚠ Check buzzer wiring (GPIO23 → Buzzer+ → GND)"
+        else
+            echo "  ✓ Buzzer OK"
+        fi
+    fi
+fi
+
+# Microphone test
+read -rp "  Test microphone? (will record 2 seconds) [Y/n]: " test_mic
+if [[ ! "$test_mic" =~ ^[Nn]$ ]]; then
+    # Determine ALSA device from config
+    mic_dev=$(grep "^AUDIO_DEVICE=" "$CONFIG_FILE" | cut -d= -f2)
+    mic_dev="${mic_dev:-default}"
+    i2s_dev=$(grep "^I2S_AUDIO_DEVICE=" "$CONFIG_FILE" | cut -d= -f2)
+    use_i2s=$(grep "^USE_I2S_MIC=" "$CONFIG_FILE" | cut -d= -f2)
+    if [[ "$use_i2s" == "true" && -n "$i2s_dev" ]]; then
+        mic_dev="$i2s_dev"
+    fi
+
+    echo "  Recording 2s from $mic_dev …"
+    TEST_WAV="/tmp/picapture-mic-test.wav"
+    if arecord -D "$mic_dev" -f S16_LE -r 44100 -c 1 -d 2 "$TEST_WAV" 2>/dev/null; then
+        wav_size=$(stat -c%s "$TEST_WAV" 2>/dev/null || echo 0)
+        if [[ "$wav_size" -gt 10000 ]]; then
+            # Signal confirmation via available hardware
+            if grep -q "^USE_BUZZER=true" "$CONFIG_FILE" 2>/dev/null; then
+                "$VENV_DIR/bin/python" -c "
+from capture import buzzer
+buzzer.setup()
+buzzer.beep(0.3)
+buzzer.cleanup()
+" 2>/dev/null
+            elif grep -q "^LED_PIN=" "$CONFIG_FILE" 2>/dev/null; then
+                "$VENV_DIR/bin/python" -c "
+from capture import led
+import time
+led.setup()
+led.on(); time.sleep(1.0); led.off()
+led.cleanup()
+" 2>/dev/null
+            fi
+            echo "  ✓ Mic OK – captured $(( wav_size / 1024 )) KB"
+        else
+            echo "  ⚠ Recording too small (${wav_size} bytes) – mic may not be working"
+        fi
+    else
+        echo "  ⚠ arecord failed – check ALSA device ($mic_dev)"
+    fi
+    rm -f "$TEST_WAV"
+fi
+
 # ── Camera check ──────────────────────────────────────────────────
+echo ""
 echo "[4/5] Checking camera …"
 if command -v rpicam-hello >/dev/null 2>&1; then
     echo "  Running quick camera test (2s) …"
-    timeout 3 rpicam-hello -t 2000 --nopreview 2>/dev/null && echo "  ✓ Camera OK" || echo "  ⚠ Camera test failed – check connection"
+    if timeout 3 rpicam-hello -t 2000 --nopreview 2>/dev/null; then
+        echo "  ✓ Camera OK"
+    else
+        echo "  ⚠ Camera test failed – this is normal if the capture"
+        echo "    service is currently running (camera busy)."
+        echo "    If this is a fresh install, check the ribbon cable."
+    fi
 else
-    echo "  ⚠ rpicam-hello not found – is Pi Camera connected?"
+    echo "  ⚠ rpicam-hello not found – is rpicam-apps installed?"
 fi
 
 # ── Audio check ───────────────────────────────────────────────────

@@ -134,6 +134,23 @@ def _on_vlong_press():
     _pause_event.clear()
 
 # ---------------------------------------------------------------------------
+# Stale chunk cleanup
+# ---------------------------------------------------------------------------
+
+def _cleanup_stale_chunks():
+    """Remove leftover .mp4 files from a previous crash to free RAM disk space."""
+    try:
+        stale = list(config.CAPTURE_DIR.glob("chunk-*.mp4"))
+        if stale:
+            log.warning("Removing %d stale chunk(s) from previous run", len(stale))
+            for f in stale:
+                f.unlink(missing_ok=True)
+                log.debug("  removed %s", f.name)
+    except Exception as exc:
+        log.debug("Stale chunk cleanup skipped: %s", exc)
+
+
+# ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
@@ -155,6 +172,9 @@ def main():
         on_vlong_press=_on_vlong_press,
     )
     picam2 = create_camera()
+
+    # Clean up stale chunks from previous crash / unclean shutdown
+    _cleanup_stale_chunks()
 
     log.info("══════════════════════════════════════════")
     log.info("  PiZero Capture System")

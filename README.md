@@ -8,7 +8,7 @@ The Pi acts as an autonomous recording device that replaces the phone/browser
 ```
 ┌─────────────────────────────────────────────────────┐
 │  IDLE (low-power QR scan)                           │
-│  Camera at 640×480 @ 5 fps, scanning for QR code    │
+│  Camera at 480×480 @ 15 fps, scanning for QR code   │
 │  from viewer.html                                   │
 └──────────────────┬──────────────────────────────────┘
                    │ QR detected → masterSessionId
@@ -35,17 +35,17 @@ The Pi acts as an autonomous recording device that replaces the phone/browser
 | Pi Camera Module 3 | Connected via ribbon cable |
 | USB microphone | Any ALSA-compatible device |
 | Status LED (optional) | GPIO 17, simple on/off feedback |
-| Active buzzer (optional) | GPIO 27, audio beep feedback |
+| Piezo buzzer (optional) | GPIO 23, tonal PWM feedback |
 
 ### Wiring (optional)
 
 ```
 Pi GPIO 17 ──┤330Ω├── LED (+) ── GND
-Pi GPIO 27 ────────── Buzzer (+) ── GND
+Pi GPIO 23 ────────── Buzzer (+) ── GND
 ```
 
 - **LED**: Any standard 3mm/5mm LED with a 330Ω resistor in series. Long leg (anode) toward the resistor, short leg (cathode) to GND.
-- **Buzzer**: Active buzzer (has built-in oscillator, just needs HIGH/LOW). `+` to GPIO, `−` to GND. No resistor needed.
+- **Buzzer**: Passive piezo buzzer (PWM-driven for tonal feedback). `+` to GPIO, `−` to GND. No resistor needed.
 
 Both are optional — the software no-ops gracefully without them.
 
@@ -56,11 +56,11 @@ Both are optional — the software no-ops gracefully without them.
 git clone https://github.com/helloworld-germany/PiZero.git
 cd PiZero
 
-# 2. Run setup (installs deps, creates venv, optionally enables systemd)
+# 2. Run setup (will prompt for sudo where needed)
 ./setup.sh
 
-# 3. Configure the API endpoint
-#    Edit capture/config.env and set VIDAUGMENT_API_BASE_URL
+# 3. Reboot if prompted (needed for I2S audio / tmpfs)
+#    After reboot the system is ready to run.
 
 # 4. Run
 source ~/.venvs/picapture/bin/activate
@@ -77,12 +77,13 @@ All settings live in `capture/config.env` (or as environment variables):
 | `RECORD_DURATION_S` | `20` | Capture length in seconds |
 | `VIDEO_WIDTH` / `VIDEO_HEIGHT` | `720` / `1280` | Capture resolution |
 | `VIDEO_FPS` | `30` | Capture frame rate |
-| `QR_SCAN_WIDTH` / `QR_SCAN_HEIGHT` | `640` / `480` | QR scanner resolution |
-| `QR_SCAN_FPS` | `5` | Idle scanner frame rate |
+| `QR_SCAN_WIDTH` / `QR_SCAN_HEIGHT` | `480` / `480` | QR scanner resolution |
+| `QR_SCAN_FPS` | `15` | Idle scanner frame rate |
 | `AUDIO_DEVICE` | `default` | ALSA device (`arecord -l` to list) |
 | `CAPTURE_DIR` | `/run/picapture` | Capture directory (tmpfs RAM disk) |
+| `PAUSE_IDLE_TIMEOUT_S` | `60` | Auto-end session after this many seconds paused |
 | `LED_PIN` | `17` | BCM GPIO pin for status LED |
-| `BUZZER_PIN` | `27` | BCM GPIO pin for active buzzer |
+| `BUZZER_PIN` | `23` | BCM GPIO pin for piezo buzzer |
 
 ## Capture
 
@@ -162,12 +163,12 @@ capture/
   main.py           # state machine orchestrator
   config.py         # settings from config.env / env vars
   config.env        # editable configuration
-  camera.py         # picamera2 mode switching
+  camera.py         # picamera2 QR-scan mode
   qr_scanner.py     # low-power QR detection (pyzbar)
-  recorder.py       # 20s video+audio capture + ffmpeg mux
+  recorder.py       # rpicam-vid native H.264+audio capture
   uploader.py       # HTTP upload & session finish
   led.py            # GPIO LED feedback
-  buzzer.py         # GPIO active buzzer feedback
-setup.sh            # one-shot Pi setup
+  buzzer.py         # GPIO piezo buzzer (PWM tonal feedback)
+setup.sh            # one-shot Pi setup (sudo required)
 requirements.txt    # Python dependencies
 ```
