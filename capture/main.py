@@ -31,7 +31,7 @@ from . import buzzer
 from . import button
 from .camera import create_camera, configure_qr_mode
 from .qr_scanner import run_scanner
-from .recorder import record_chunk
+from .recorder import start_recording, stop_recording, find_ready_chunks, find_all_chunks
 from .uploader import upload_recording, finish_session, connect_session
 
 logging.basicConfig(
@@ -100,18 +100,16 @@ def _stop_pause_pulse():
 
 
 def _on_short_press():
-    """Toggle pause / resume.  Ends current chunk; the loop waits before starting the next."""
+    """Toggle pause / resume.  The main loop detects _pause_event and stops/restarts rpicam-vid."""
     if _pause_event.is_set():
         log.info("Button: RESUME")
         _pause_event.clear()
-        _stop_event.clear()     # allow outer capture loop to continue
         _stop_pause_pulse()
         buzzer.beep()
         led.on()
     else:
-        log.info("Button: PAUSE (ending current chunk)")
+        log.info("Button: PAUSE")
         _pause_event.set()
-        _stop_event.set()       # gracefully end current rpicam-vid chunk
         buzzer.beep()
         _start_pause_pulse()
 
@@ -141,7 +139,10 @@ def _on_vlong_press():
 def _cleanup_stale_chunks():
     """Remove leftover files from a previous crash to free RAM disk space."""
     try:
-        stale = list(config.CAPTURE_DIR.glob("chunk-*.mp4")) + \
+        stale = list(config.CAPTURE_DIR.glob("*_chunk_*.mkv")) + \
+                list(config.CAPTURE_DIR.glob("*_chunk_*.mp4")) + \
+                list(config.CAPTURE_DIR.glob("chunk-*.mp4")) + \
+                list(config.CAPTURE_DIR.glob("chunk-*.mkv")) + \
                 list(config.CAPTURE_DIR.glob("raw-*.*"))
         if stale:
             log.warning("Removing %d stale chunk(s) from previous run", len(stale))
@@ -241,31 +242,20 @@ def _run_cycle():
     session_start = time.monotonic()
     chunk_index = 0
 
-    # ── Background upload worker (gapless: record next while uploading) ──
+    # ── Background upload worker ─────────────────────────────────
     upload_q = queue.Queue()
     upload_error = threading.Event()
 
     def _upload_worker():
-        from .recorder import _mux_av
         while True:
             item = upload_q.get()
             if item is None:          # poison pill → drain complete
                 upload_q.task_done()
                 break
-            raw_video, raw_audio, idx = item
+            output, idx = item
             try:
-                if raw_audio:
-                    # Mux raw files into .mp4 (parallel with next recording)
-                    output = raw_video.with_suffix(".mp4")
-                    gain = config.AUDIO_GAIN_DB
-                    _mux_av(raw_video, raw_audio, output, gain_db=gain)
-                    log.info("Chunk %d muxed: %s (%.1f KB)", idx, output.name,
-                             output.stat().st_size / 1024)
-                else:
-                    # No audio – rpicam-vid already produced mp4 directly
-                    output = raw_video
-                    log.info("Chunk %d ready (video-only): %s (%.1f KB)", idx,
-                             output.name, output.stat().st_size / 1024)
+                log.info("Chunk %d ready: %s (%.1f KB)", idx,
+                         output.name, output.stat().st_size / 1024)
                 # Save a debug copy before upload
                 if config.DEBUG_SAVE_CHUNKS:
                     import shutil
@@ -289,6 +279,20 @@ def _run_cycle():
     upload_thread = threading.Thread(target=_upload_worker, daemon=True)
     upload_thread.start()
 
+    # ── Continuous recording with --segment ───────────────────────
+    proc, prefix, ext = start_recording()
+    queued = set()       # paths already sent to upload_q
+    chunk_index = 0
+
+    def _queue_chunks(chunks):
+        nonlocal chunk_index
+        for chunk in chunks:
+            if chunk not in queued:
+                queued.add(chunk)
+                log.info("── QUEUED chunk %d for upload ──", chunk_index)
+                upload_q.put((chunk, chunk_index))
+                chunk_index += 1
+
     while not _shutdown and not _stop_event.is_set() and not _halt_requested.is_set():
         # Hard timeout check
         elapsed = time.monotonic() - session_start
@@ -296,53 +300,49 @@ def _run_cycle():
             log.warning("Hard timeout (%ds) reached – ending session", config.HARD_TIMEOUT_S)
             break
 
-        remaining = config.HARD_TIMEOUT_S - elapsed
-        chunk_dur = min(config.RECORD_DURATION_S, int(remaining))
-        if chunk_dur <= 0:
-            break
-
-        # Record one chunk (pause ends chunk early via _stop_event;
-        # the while loop starts a new chunk with remaining time)
-        _pause_event.clear()
-        _stop_event.clear()
-        try:
-            result = record_chunk(
-                chunk_duration=chunk_dur,
-                stop_event=_stop_event,
-            )
-        except Exception:
-            log.exception("Chunk %d recording failed", chunk_index)
+        # Check if rpicam-vid crashed
+        if proc.poll() is not None:
+            log.error("rpicam-vid exited unexpectedly (rc=%d)", proc.returncode)
             led.error_flash()
             buzzer.error_beep()
             break
 
-        if result is None:
-            break
+        # Pick up completed chunks (all except the one still being written)
+        _queue_chunks(find_ready_chunks(prefix, ext))
 
-        raw_video, raw_audio = result
+        # ── Handle pause ──────────────────────────────────────────
+        if _pause_event.is_set():
+            stop_recording(proc)
+            _queue_chunks(find_all_chunks(prefix, ext))
 
-        # Queue raw files for background mux + upload – next recording starts immediately
-        log.info("── QUEUED chunk %d for mux+upload ──", chunk_index)
-        upload_q.put((raw_video, raw_audio, chunk_index))
-        chunk_index += 1
+            pause_start = time.monotonic()
+            while _pause_event.is_set() and not _shutdown and not _halt_requested.is_set():
+                if time.monotonic() - pause_start >= config.PAUSE_IDLE_TIMEOUT_S:
+                    log.info("Pause idle timeout (%ds) – ending session",
+                             config.PAUSE_IDLE_TIMEOUT_S)
+                    _pause_event.clear()
+                    _stop_event.set()
+                    _stop_pause_pulse()
+                    break
+                time.sleep(0.25)
 
-        # Wait while paused (session timer keeps ticking)
-        pause_start = time.monotonic()
-        while _pause_event.is_set() and not _shutdown and not _halt_requested.is_set():
-            if time.monotonic() - pause_start >= config.PAUSE_IDLE_TIMEOUT_S:
-                log.info("Pause idle timeout (%ds) – ending session", config.PAUSE_IDLE_TIMEOUT_S)
-                _pause_event.clear()
-                _stop_event.set()
-                _stop_pause_pulse()
-                break
-            time.sleep(0.25)
+            # Resume with a fresh rpicam-vid process
+            if not _stop_event.is_set() and not _shutdown and not _halt_requested.is_set():
+                proc, prefix, ext = start_recording()
+                queued.clear()
 
-        # Without button, record only one chunk (original single-shot behavior)
-        if not config.USE_BUTTON:
+            continue
+
+        # Without button, stop after the first completed chunk
+        if not config.USE_BUTTON and chunk_index > 0:
             log.info("Button disabled – single-chunk mode, ending session")
             break
 
-    # Camera was closed for rpicam-vid – nothing to stop here
+        time.sleep(2)
+
+    # ── Stop recording & collect final chunks ─────────────────────
+    stop_recording(proc)
+    _queue_chunks(find_all_chunks(prefix, ext))
 
     # ── Drain pending uploads before finishing session ─────────────
     pending = upload_q.qsize()

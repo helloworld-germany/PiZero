@@ -72,6 +72,9 @@ SVCEOF
 sudo systemctl daemon-reload
 sudo systemctl enable picapture.service
 
+# Ensure ALSA mixer settings are restored on boot (alsa-restore.service)
+sudo systemctl enable alsa-restore.service 2>/dev/null || true
+
 # Disable self so it doesn't run again
 echo "[7] Disabling first-boot service …"
 sudo systemctl disable firstboot.service

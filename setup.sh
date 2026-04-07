@@ -243,6 +243,26 @@ led.cleanup()
     rm -f "$TEST_WAV"
 fi
 
+# ── ALSA capture gain (system-wide) ──────────────────────────────
+echo ""
+echo "  ── Audio capture gain ──"
+echo ""
+echo "  Audio gain is set system-wide via ALSA mixer controls."
+echo "  This avoids per-chunk software gain in ffmpeg."
+echo ""
+read -rp "  Set capture gain now via alsamixer? [Y/n]: " set_gain
+if [[ ! "$set_gain" =~ ^[Nn]$ ]]; then
+    echo "  Opening alsamixer – press F6 to select sound card, F4 for capture."
+    echo "  Adjust the capture level (I2S MEMS mics typically need high gain)."
+    echo "  Press Esc when done."
+    alsamixer 2>/dev/null || echo "  ⚠ alsamixer not available (install alsa-utils)"
+    echo "  Persisting ALSA mixer settings …"
+    sudo alsactl store 2>/dev/null && echo "  ✓ ALSA settings saved (restored automatically on boot)" \
+        || echo "  ⚠ alsactl store failed – settings will not persist across reboots"
+else
+    echo "  → Skipped. You can set gain later with: alsamixer && sudo alsactl store"
+fi
+
 # ── Camera check ──────────────────────────────────────────────────
 echo ""
 echo "[4/5] Checking camera …"
