@@ -68,6 +68,7 @@ def record_chunk(
     if audio_device:
         cmd += [
             "--libav-audio",
+            "--audio-source", "alsa",
             "--audio-device", audio_device,
             "--audio-codec", "aac",
             "--audio-bitrate", "64000",
