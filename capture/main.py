@@ -104,6 +104,7 @@ def _on_short_press():
     if _pause_event.is_set():
         log.info("Button: RESUME")
         _pause_event.clear()
+        _stop_event.clear()     # allow outer capture loop to continue
         _stop_pause_pulse()
         buzzer.beep()
         led.on()
