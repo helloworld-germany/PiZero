@@ -252,6 +252,10 @@ def _run_cycle():
                 break
             fpath, idx = item
             try:
+                # Apply audio gain boost in background (parallel with next recording)
+                if config.AUDIO_GAIN_DB and config.AUDIO_GAIN_DB != 0:
+                    from .recorder import _apply_audio_gain
+                    fpath = _apply_audio_gain(fpath, config.AUDIO_GAIN_DB)
                 resp = upload_recording(master_session_id, fpath)
                 fpath.unlink(missing_ok=True)
                 action = resp.get("action", "continue") if isinstance(resp, dict) else "continue"

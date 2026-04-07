@@ -150,9 +150,5 @@ def record_chunk(
         except Exception as exc:
             log.debug("ffprobe check skipped: %s", exc)
 
-    # Apply audio gain boost (I2S MEMS mics are very quiet without this)
-    if audio_device and config.AUDIO_GAIN_DB and config.AUDIO_GAIN_DB != 0:
-        output_file = _apply_audio_gain(output_file, config.AUDIO_GAIN_DB)
-
     log.info("Chunk ready: %s (%.1f KB)", output_file, output_file.stat().st_size / 1024)
     return output_file
