@@ -9,7 +9,7 @@ State machine:
                          Backend may respond {"action":"stop"} → end session.
     State 4 – BUTTON:   Short press  → pause/resume (LED pulse, buzzer 2×)
                          Long press   → end session (upload last chunk, LED off)
-                         Very long    → sudo halt (buzzer 3× fast, LED off)
+                         Very long    → sudo halt (descending chord, LED off)
     State 5 – TIMEOUT:  Hard timeout at 30 min. Smart stop via backend.
 
 Usage:
@@ -131,7 +131,6 @@ def _on_long_press():
 def _on_vlong_press():
     """Request safe shutdown (sudo halt)."""
     log.info("Button: SHUTDOWN requested")
-    buzzer.chord_down()
     led.off()
     _halt_requested.set()
     _stop_event.set()

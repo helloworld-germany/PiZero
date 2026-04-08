@@ -141,10 +141,10 @@ def _poll_loop():
                 _buzzer.beep(0.1)
                 log.debug("Button: long-press threshold reached")
 
-            # Feedback at very-long-press threshold (8s)
+            # Feedback at very-long-press threshold (8s) – chord signals halt is committed
             if not vlong_signalled and held >= VLONG_PRESS_S:
                 vlong_signalled = True
-                _buzzer.triple_beep()
+                _buzzer.chord_down()
                 log.debug("Button: very-long-press threshold reached")
 
             _monitor_stop.wait(_DEBOUNCE_S)
