@@ -32,6 +32,7 @@ RECORD_DURATION_S = int(os.environ.get("RECORD_DURATION_S", "20"))
 VIDEO_WIDTH = int(os.environ.get("VIDEO_WIDTH", "720"))
 VIDEO_HEIGHT = int(os.environ.get("VIDEO_HEIGHT", "1280"))
 VIDEO_FPS = int(os.environ.get("VIDEO_FPS", "30"))
+VIDEO_BITRATE = int(os.environ.get("VIDEO_BITRATE", "2000000"))
 
 # QR scanner (fast scan mode)
 QR_SCAN_WIDTH = int(os.environ.get("QR_SCAN_WIDTH", "480"))

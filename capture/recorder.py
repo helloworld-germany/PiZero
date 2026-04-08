@@ -74,7 +74,7 @@ def start_recording(
         "--width", str(config.VIDEO_WIDTH),
         "--height", str(config.VIDEO_HEIGHT),
         "--framerate", str(config.VIDEO_FPS),
-        "--bitrate", "2000000",
+        "--bitrate", str(config.VIDEO_BITRATE),
         "-n",
         "-o", output_pattern,
     ]

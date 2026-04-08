@@ -86,6 +86,7 @@ All settings live in `capture/config.env` (or as environment variables):
 | `RECORD_DURATION_S` | `20` | Capture length in seconds |
 | `VIDEO_WIDTH` / `VIDEO_HEIGHT` | `720` / `1280` | Capture resolution |
 | `VIDEO_FPS` | `30` | Capture frame rate |
+| `VIDEO_BITRATE` | `2000000` | H.264 target bitrate in bits per second |
 | `QR_SCAN_WIDTH` / `QR_SCAN_HEIGHT` | `480` / `480` | QR scanner resolution |
 | `QR_SCAN_FPS` | `15` | Idle scanner frame rate |
 | `MIC_TYPE` | `i2s` | Microphone: `i2s`, `usb`, or `none` |
@@ -99,6 +100,10 @@ All settings live in `capture/config.env` (or as environment variables):
 Recording uses `rpicam-vid` (Bookworm rpicam-apps) with native hardware
 muxing: H.264 encoding + ALSA audio capture + MKV container — all in one
 binary with **near-zero CPU** usage.
+
+The default capture profile is portrait (`720x1280`). This is valid for
+`rpicam-vid`; width does not need to be greater than height. It only affects
+the encoded frame dimensions and resulting aspect ratio, not capture stability.
 
 ```
 rpicam-vid -t 10 --audio-source alsa --audio-device plughw:0,0 \
