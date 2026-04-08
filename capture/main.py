@@ -126,6 +126,7 @@ def _on_long_press():
     _stop_event.set()
     _pause_event.clear()
     _stop_pause_pulse()
+    led.off()
 
 
 def _on_vlong_press():
@@ -345,6 +346,7 @@ def _run_cycle():
 
             # Resume with a fresh rpicam-vid process
             if not _stop_event.is_set() and not _shutdown and not _halt_requested.is_set():
+                led.on()
                 proc, prefix, ext = start_recording()
                 queued.clear()
 
@@ -372,6 +374,7 @@ def _run_cycle():
     if upload_error.is_set():
         led.error_flash()
         buzzer.error_beep()
+        time.sleep(1)  # let error flash be visible before end-blink
 
     # ── FINISH SESSION ────────────────────────────────────────────
     # ── FINISH SESSION (fire-and-forget, don't block return to idle) ─

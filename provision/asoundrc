@@ -1,15 +1,26 @@
-# ALSA software gain boost for I2S microphones.
+# Software volume boost for I2S microphone (INMP441).
 # Deployed to ~/.asoundrc by setup.sh.
 #
-# Usage: set MIC_TYPE=i2s in capture/config.env (this is the default)
-# Adjust slave.pcm to match your hardware (run `arecord -l`).
-# Adjust ttable values to change gain (5.0 = 5× amplification).
+# The INMP441 raw output is very quiet. This adds a softvol
+# control so you can crank the gain up to +50 dB.
+#
+# Setup (once):
+#   cp provision/asoundrc ~/.asoundrc
+#   arecord -D boosted_mic -d 1 /dev/null   # creates the mixer control
+#   amixer -D boosted_mic sset 'I2S Boost' 100%
+#   sudo alsactl store
+#
+# Test:
+#   arecord -D boosted_mic -f S32_LE -r 48000 -c 2 -d 3 test.wav
+#   aplay test.wav
 
 pcm.boosted_mic {
-    type route
+    type softvol
     slave.pcm "plughw:0,0"
-
-    # Volume multiplier per channel (5.0 = 5× gain)
-    ttable.0.0 5.0
-    ttable.1.1 5.0
+    control {
+        name "I2S Boost"
+        card 0
+    }
+    min_dB -5.0
+    max_dB 50.0
 }

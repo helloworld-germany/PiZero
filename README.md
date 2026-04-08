@@ -2,8 +2,7 @@
 
 Raspberry Pi Zero capture frontend for **vidaugment** (20sVA).
 
-The Pi acts as an autonomous recording device that replaces the phone/browser
-`index.html` capture flow:
+The Pi acts as an autonomous recording device that replaces the phone/browser capture flow:
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -137,42 +136,37 @@ arecord -l
 
 ### Software gain boost (`boosted_mic`)
 
-I2S microphones like the INMP441 are often very quiet at their default
-level. The file `provision/asoundrc` defines a virtual ALSA device
-called `boosted_mic` that applies 5× software gain:
+I2S microphones like the INMP441 are very quiet at their raw output
+level. The file `provision/asoundrc` adds a single `softvol` plugin
+on top of the hardware device, giving you up to +50 dB of clean gain:
 
 ```
 pcm.boosted_mic {
-    type route
+    type softvol
     slave.pcm "plughw:0,0"
-    ttable.0.0 5.0
-    ttable.1.1 5.0
+    control { name "I2S Boost"; card 0 }
+    min_dB -5.0
+    max_dB 50.0
 }
 ```
 
-This is deployed automatically by `setup.sh` to `~/.asoundrc`.
-To install manually:
+Setup (once per Pi):
 
 ```bash
 cp provision/asoundrc ~/.asoundrc
+arecord -D boosted_mic -d 1 /dev/null   # creates the mixer control
+amixer -D boosted_mic sset 'I2S Boost' 100%
+sudo alsactl store
 ```
 
-Then set in `capture/config.env`:
-
-```bash
-MIC_TYPE=i2s
-```
-
-Test it:
+Test:
 
 ```bash
 arecord -D boosted_mic -f S32_LE -r 48000 -c 2 -d 3 test.wav
 aplay test.wav
 ```
 
-Adjust the gain by editing `~/.asoundrc` — change `5.0` to a higher
-value (e.g. `10.0`) if still too quiet, or lower (e.g. `3.0`) if
-clipping.
+Reduce from `100%` if you hear clipping/distortion.
 
 ### USB microphone (alternative)
 
