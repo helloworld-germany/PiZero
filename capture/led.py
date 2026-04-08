@@ -161,12 +161,3 @@ def cleanup():
             _led.close()
         except Exception:
             pass
-
-
-def cleanup():
-    _stop_idle()
-    if _led:
-        try:
-            _led.close()
-        except Exception:
-            pass

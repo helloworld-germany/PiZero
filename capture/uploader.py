@@ -123,3 +123,20 @@ def connect_session(master_session_id: str) -> None:
             log.warning("Connect call returned %d", resp.status_code)
     except Exception as exc:
         log.warning("Connect call failed (non-blocking): %s", exc)
+
+
+def notify_pause(master_session_id: str, paused: bool) -> None:
+    """POST /api/masterSession/<id>/pause — fire-and-forget pause/resume notification."""
+    if not config.API_BASE_URL:
+        return
+
+    url = f"{config.API_BASE_URL}/api/masterSession/{master_session_id}/pause"
+    try:
+        resp = requests.post(url, json={"paused": paused}, timeout=5)
+        if resp.ok:
+            log.info("Notified backend: session %s %s",
+                     master_session_id, "paused" if paused else "resumed")
+        else:
+            log.warning("Pause notify returned %d", resp.status_code)
+    except Exception as exc:
+        log.warning("Pause notify failed (non-blocking): %s", exc)

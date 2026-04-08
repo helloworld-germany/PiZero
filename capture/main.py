@@ -32,7 +32,7 @@ from . import button
 from .camera import create_camera, configure_qr_mode
 from .qr_scanner import run_scanner
 from .recorder import start_recording, stop_recording, find_ready_chunks, find_all_chunks
-from .uploader import upload_recording, finish_session, connect_session
+from .uploader import upload_recording, finish_session, connect_session, notify_pause
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
@@ -62,6 +62,7 @@ signal.signal(signal.SIGTERM, _handle_signal)
 _pause_event = threading.Event()   # set = paused
 _stop_event = threading.Event()    # set = end session
 _halt_requested = threading.Event()
+_master_session_id = None          # set during active capture cycle
 
 # LED pulse thread for pause state
 _pulse_thread = None
@@ -107,11 +108,15 @@ def _on_short_press():
         _stop_pause_pulse()
         buzzer.beep()
         led.on()
+        if _master_session_id:
+            threading.Thread(target=notify_pause, args=(_master_session_id, False), daemon=True).start()
     else:
         log.info("Button: PAUSE")
         _pause_event.set()
         buzzer.beep()
         _start_pause_pulse()
+        if _master_session_id:
+            threading.Thread(target=notify_pause, args=(_master_session_id, True), daemon=True).start()
 
 
 def _on_long_press():
@@ -227,6 +232,8 @@ def _run_cycle():
         return
 
     # ── STATE 2: TRIGGER ──────────────────────────────────────────
+    global _master_session_id
+    _master_session_id = master_session_id
     log.info("Session acquired: %s", master_session_id)
     led.connected_flash()
     buzzer.beep()
@@ -349,7 +356,8 @@ def _run_cycle():
     if pending:
         log.info("Waiting for %d pending upload(s) …", pending)
     upload_q.put(None)             # poison pill
-    upload_thread.join(timeout=300)
+    # Keep drain short so _cleanup() runs before systemd SIGKILL (default 90s)
+    upload_thread.join(timeout=30)
 
     if upload_error.is_set():
         led.error_flash()
@@ -370,6 +378,7 @@ def _run_cycle():
     led.blink(2, 0.3)
     led.off()
 
+    _master_session_id = None
     log.info("── CYCLE COMPLETE ── %d chunks uploaded, returning to idle", chunk_index)
 
 
