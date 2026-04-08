@@ -49,7 +49,7 @@ I2S INMP441:
   SD/DOUT   → GPIO 20 (pin 38)
   VDD       → 3.3 V
   GND       → GND
-  L/R       → GND (left channel)
+  L/R       → GND (left channel, mono)
 ```
 
 - **LED**: Any standard 3mm/5mm LED with a 330Ω resistor in series. Long leg (anode) toward the resistor, short leg (cathode) to GND.
@@ -97,12 +97,12 @@ All settings live in `capture/config.env` (or as environment variables):
 ## Capture
 
 Recording uses `rpicam-vid` (Bookworm rpicam-apps) with native hardware
-muxing: H.264 encoding + ALSA audio capture + mp4 container — all in one
+muxing: H.264 encoding + ALSA audio capture + MKV container — all in one
 binary with **near-zero CPU** usage.
 
 ```
-rpicam-vid --codec libav --libav-format mp4 --libav-audio \
-           --audio-device plughw:0,0 -o output.mp4
+rpicam-vid -t 10 --audio-source alsa --audio-device plughw:0,0 \
+           --audio-channels 1 --audio-samplerate 48000 -o output.mkv
 ```
 
 The microphone is selected by `MIC_TYPE` in `capture/config.env`:
@@ -110,7 +110,7 @@ The microphone is selected by `MIC_TYPE` in `capture/config.env`:
 | `MIC_TYPE` | ALSA device | Description |
 |------------|-------------|-------------|
 | `i2s` | `plughw:0,0` | I2S mic via googlevoicehat overlay (default) |
-| `usb` | `default` | Standard USB microphone |
+| `usb` | `plughw:<N>,0` | USB microphone (auto-detected card number) |
 | `none` | — | No audio |
 
 Audio normalization is handled in the cloud after upload.

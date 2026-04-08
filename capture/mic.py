@@ -12,7 +12,7 @@ Common I2S microphone wiring (e.g. INMP441, SPH0645):
     SD/DOUT   -> GPIO20 / physical pin 38
     VDD       -> 3.3V
     GND       -> GND
-    L/R       -> GND (left) or 3.3V (right)
+    L/R       -> GND (left channel, mono) or 3.3V (right)
 """
 
 import logging
@@ -23,8 +23,8 @@ from . import config
 log = logging.getLogger(__name__)
 
 
-def _any_capture_card() -> bool:
-    """Return True if arecord lists at least one capture card."""
+def _list_capture_cards() -> list[tuple[int, str]]:
+    """Return ``[(card_number, description), ...]`` from ``arecord -l``."""
     try:
         result = subprocess.run(
             ["arecord", "-l"],
@@ -32,9 +32,22 @@ def _any_capture_card() -> bool:
             stderr=subprocess.DEVNULL,
             timeout=5,
         )
-        return b"card" in result.stdout
+        cards = []
+        for line in result.stdout.decode(errors="replace").splitlines():
+            if line.startswith("card "):
+                card_num = int(line.split(":")[0].split()[1])
+                cards.append((card_num, line))
+        return cards
     except Exception:
-        return False
+        return []
+
+
+def _find_card(pattern: str) -> int | None:
+    """Return the card number of the first capture card whose description matches *pattern*."""
+    for num, desc in _list_capture_cards():
+        if pattern.lower() in desc.lower():
+            return num
+    return None
 
 
 def has_audio_input() -> bool:
@@ -46,8 +59,8 @@ def preferred_audio_device() -> str | None:
     """Return the ALSA device string to use for recording, or None.
 
     MIC_TYPE selects the device:
-      - "i2s":  boosted I2S mic via plughw (default)
-      - "usb":  standard USB / ALSA mic ("default" device)
+      - "i2s":  I2S mic via plughw (default) – looks for googlevoicehat / I2S card
+      - "usb":  USB microphone – scans for a USB capture card
       - "none": no microphone
     """
     mic_type = config.MIC_TYPE
@@ -57,17 +70,27 @@ def preferred_audio_device() -> str | None:
         return None
 
     if mic_type == "i2s":
-        if _any_capture_card():
-            log.info("I2S mic selected, capture card found – using plughw:0,0")
+        card = _find_card("googlevoice")
+        if card is None:
+            card = _find_card("i2s")
+        if card is not None:
+            device = f"plughw:{card},0"
+            log.info("I2S mic selected – using %s", device)
+            return device
+        # Fall back: if any card exists, assume card 0 is the I2S device
+        if _list_capture_cards():
+            log.warning("I2S mic selected, no googlevoicehat card found – falling back to plughw:0,0")
             return "plughw:0,0"
         log.warning("I2S mic selected but no capture card found")
         return None
 
     if mic_type == "usb":
-        if _any_capture_card():
-            log.info("USB mic selected – using default ALSA device")
-            return "default"
-        log.warning("USB mic selected but no capture card found")
+        card = _find_card("usb")
+        if card is not None:
+            device = f"plughw:{card},0"
+            log.info("USB mic selected – using %s", device)
+            return device
+        log.warning("USB mic selected but no USB capture card found")
         return None
 
     log.error("Unknown MIC_TYPE=%r – treating as none", mic_type)

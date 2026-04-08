@@ -3,7 +3,7 @@ Video + audio capture via a single rpicam-vid process with ``--segment``.
 
 rpicam-vid runs continuously with ``-t 0 --segment <ms>`` and produces
 gapless, individually-decodable chunks (``--inline``).  Audio is muxed
-inline via ``--audio``.  No arecord, no ffmpeg, no post-processing.
+inline via ``--audio-source`` / ``--audio-device``.  No arecord, no ffmpeg, no post-processing.
 
 Capture gain is set system-wide via ALSA mixer (alsamixer + alsactl store).
 """
@@ -78,7 +78,12 @@ def start_recording(
         "-o", output_pattern,
     ]
     if audio_device:
-        cmd += ["--audio", audio_device]
+        cmd += [
+            "--audio-source", "alsa",
+            "--audio-device", audio_device,
+            "--audio-channels", "1",        # INMP441 = mono (left channel only)
+            "--audio-samplerate", "48000",  # native I2S / voiceHAT rate
+        ]
 
     log.info("Starting continuous recording (segment=%ds, audio=%s)",
              chunk_duration, audio_device or "(none)")

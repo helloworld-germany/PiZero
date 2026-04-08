@@ -191,10 +191,17 @@ if [[ ! "$test_mic" =~ ^[Nn]$ ]]; then
     # Determine ALSA device from config
     mic_type=$(grep "^MIC_TYPE=" "$CONFIG_FILE" | cut -d= -f2)
     mic_type="${mic_type:-i2s}"
-    if [[ "$mic_type" == "i2s" ]]; then
-        mic_dev="plughw:0,0"
+    if [[ "$mic_type" == "usb" ]]; then
+        # Find the USB capture card number
+        usb_card=$(arecord -l 2>/dev/null | grep -i "^card.*usb" | head -1 | sed 's/card \([0-9]*\):.*/\1/')
+        if [[ -n "$usb_card" ]]; then
+            mic_dev="plughw:${usb_card},0"
+        else
+            mic_dev="plughw:0,0"
+            echo "  ⚠ No USB capture card found – trying plughw:0,0"
+        fi
     else
-        mic_dev="default"
+        mic_dev="plughw:0,0"
     fi
 
     echo "  Recording 2s from $mic_dev …"
