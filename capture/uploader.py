@@ -98,15 +98,36 @@ def finish_session(master_session_id: str) -> dict:
     url = f"{config.API_BASE_URL}/api/masterSession/{master_session_id}/finish"
     log.info("Finishing session %s …", master_session_id)
 
-    resp = requests.post(url, timeout=_FINISH_TIMEOUT_S)
-    if not resp.ok:
-        body = resp.text[:500]
-        log.error("Finish failed %d: %s", resp.status_code, body)
-        resp.raise_for_status()
+    last_exc = None
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            resp = requests.post(url, timeout=_FINISH_TIMEOUT_S)
+            if resp.ok:
+                payload = resp.json()
+                log.info("Session %s finished", master_session_id)
+                return payload
 
-    payload = resp.json()
-    log.info("Session %s finished", master_session_id)
-    return payload
+            if 400 <= resp.status_code < 500:
+                body = resp.text[:500]
+                log.error("Finish failed %d (not retrying): %s", resp.status_code, body)
+                resp.raise_for_status()
+
+            last_exc = requests.HTTPError(f"{resp.status_code}: {resp.text[:200]}", response=resp)
+            log.warning("Finish failed %d (attempt %d/%d)",
+                        resp.status_code, attempt + 1, _MAX_RETRIES + 1)
+
+        except requests.RequestException as exc:
+            last_exc = exc
+            log.warning("Finish error (attempt %d/%d): %s",
+                        attempt + 1, _MAX_RETRIES + 1, exc)
+
+        if attempt < _MAX_RETRIES:
+            delay = _RETRY_BACKOFF[min(attempt, len(_RETRY_BACKOFF) - 1)]
+            log.info("Retrying finish in %ds …", delay)
+            time.sleep(delay)
+
+    log.error("Finish failed after %d attempts", _MAX_RETRIES + 1)
+    raise last_exc
 
 
 def connect_session(master_session_id: str) -> None:
