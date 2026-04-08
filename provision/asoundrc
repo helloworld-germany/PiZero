@@ -1,5 +1,5 @@
-# ALSA software gain boost for I2S / USB microphones.
-# Deployed to /home/pi/.asoundrc by firstboot.sh.
+# ALSA software gain boost for I2S microphones.
+# Deployed to ~/.asoundrc by setup.sh.
 #
 # Usage: set MIC_TYPE=i2s in capture/config.env (this is the default)
 # Adjust slave.pcm to match your hardware (run `arecord -l`).

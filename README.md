@@ -150,7 +150,7 @@ pcm.boosted_mic {
 }
 ```
 
-This is deployed automatically by `firstboot.sh` to `/home/pi/.asoundrc`.
+This is deployed automatically by `setup.sh` to `~/.asoundrc`.
 To install manually:
 
 ```bash
@@ -247,6 +247,4 @@ setup.sh            # one-shot Pi setup (sudo required)
 requirements.txt    # Python dependencies
 provision/
   asoundrc          # ALSA software gain boost (→ ~/.asoundrc)
-  firstboot.sh      # first-boot provisioning for fresh SD cards
-  prepare-sd.sh     # SD card image preparation
 ```

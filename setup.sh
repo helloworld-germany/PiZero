@@ -101,7 +101,16 @@ else
         echo "  ✓ Added dtoverlay=$i2s_overlay"
         NEEDS_REBOOT=true
     fi
+
+    # Deploy .asoundrc for boosted_mic virtual ALSA device (5× gain)
+    echo ""
+    echo "  Deploying ~/.asoundrc (boosted_mic with 5× software gain) …"
+    cp "$SCRIPT_DIR/provision/asoundrc" "$HOME/.asoundrc"
+    echo "  ✓ ~/.asoundrc installed"
 fi
+
+# Ensure ALSA mixer settings are restored on boot
+sudo systemctl enable alsa-restore.service 2>/dev/null || true
 
 # Buzzer
 echo ""
