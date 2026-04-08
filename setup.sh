@@ -102,9 +102,9 @@ else
         NEEDS_REBOOT=true
     fi
 
-    # Deploy .asoundrc for boosted_mic virtual ALSA device (5× gain)
+    # Deploy .asoundrc for boosted_mic virtual ALSA device (softvol +50 dB)
     echo ""
-    echo "  Deploying ~/.asoundrc (boosted_mic with 5× software gain) …"
+    echo "  Deploying ~/.asoundrc (boosted_mic with softvol gain boost) …"
     cp "$SCRIPT_DIR/provision/asoundrc" "$HOME/.asoundrc"
     echo "  ✓ ~/.asoundrc installed"
 fi
