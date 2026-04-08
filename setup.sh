@@ -244,24 +244,29 @@ led.cleanup()
     rm -f "$TEST_WAV"
 fi
 
-# ── ALSA capture gain (system-wide) ──────────────────────────────
-echo ""
-echo "  ── Audio capture gain ──"
-echo ""
-echo "  Audio gain is set system-wide via ALSA mixer controls."
-echo "  This avoids per-chunk software gain in ffmpeg."
-echo ""
-read -rp "  Set capture gain now via alsamixer? [Y/n]: " set_gain
-if [[ ! "$set_gain" =~ ^[Nn]$ ]]; then
-    echo "  Opening alsamixer – press F6 to select sound card, F4 for capture."
-    echo "  Adjust the capture level (I2S MEMS mics typically need high gain)."
-    echo "  Press Esc when done."
-    alsamixer 2>/dev/null || echo "  ⚠ alsamixer not available (install alsa-utils)"
-    echo "  Persisting ALSA mixer settings …"
-    sudo alsactl store 2>/dev/null && echo "  ✓ ALSA settings saved (restored automatically on boot)" \
-        || echo "  ⚠ alsactl store failed – settings will not persist across reboots"
+# ── ALSA capture gain (system-wide, USB mics only) ───────────────
+if [[ "$mic_type" == "usb" ]]; then
+    echo ""
+    echo "  ── Audio capture gain ──"
+    echo ""
+    echo "  USB mics often have an ALSA mixer capture volume control."
+    echo ""
+    read -rp "  Set capture gain now via alsamixer? [Y/n]: " set_gain
+    if [[ ! "$set_gain" =~ ^[Nn]$ ]]; then
+        echo "  Opening alsamixer – press F6 to select sound card, F4 for capture."
+        echo "  Adjust the capture level, then press Esc."
+        alsamixer 2>/dev/null || echo "  ⚠ alsamixer not available (install alsa-utils)"
+        echo "  Persisting ALSA mixer settings …"
+        sudo alsactl store 2>/dev/null && echo "  ✓ ALSA settings saved (restored automatically on boot)" \
+            || echo "  ⚠ alsactl store failed – settings will not persist across reboots"
+    else
+        echo "  → Skipped. You can set gain later with: alsamixer && sudo alsactl store"
+    fi
 else
-    echo "  → Skipped. You can set gain later with: alsamixer && sudo alsactl store"
+    echo ""
+    echo "  ── Audio gain ──"
+    echo "  I2S MEMS mics (INMP441) have fixed gain – no ALSA mixer control."
+    echo "  Volume normalization happens server-side after upload."
 fi
 
 # ── Camera check ──────────────────────────────────────────────────
