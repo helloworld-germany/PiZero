@@ -172,10 +172,10 @@ def long_beep(duration: float = 0.6):
 
 
 def error_beep():
-    """Three rapid beeps – something went wrong."""
-    for _ in range(3):
-        beep(0.08)
-        time.sleep(0.08)
+    """Five rapid short beeps – something went wrong."""
+    for _ in range(5):
+        beep(0.04)
+        time.sleep(0.04)
 
 
 def cleanup():

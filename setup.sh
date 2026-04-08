@@ -101,12 +101,6 @@ else
         echo "  ✓ Added dtoverlay=$i2s_overlay"
         NEEDS_REBOOT=true
     fi
-
-    # Deploy .asoundrc for boosted_mic virtual ALSA device (softvol +50 dB)
-    echo ""
-    echo "  Deploying ~/.asoundrc (boosted_mic with softvol gain boost) …"
-    cp "$SCRIPT_DIR/provision/asoundrc" "$HOME/.asoundrc"
-    echo "  ✓ ~/.asoundrc installed"
 fi
 
 # Ensure ALSA mixer settings are restored on boot
@@ -198,7 +192,7 @@ if [[ ! "$test_mic" =~ ^[Nn]$ ]]; then
     mic_type=$(grep "^MIC_TYPE=" "$CONFIG_FILE" | cut -d= -f2)
     mic_type="${mic_type:-i2s}"
     if [[ "$mic_type" == "i2s" ]]; then
-        mic_dev="boosted_mic"
+        mic_dev="plughw:0,0"
     else
         mic_dev="default"
     fi

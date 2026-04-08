@@ -334,7 +334,7 @@ def _run_cycle():
             _queue_chunks(find_all_chunks(prefix, ext))
 
             pause_start = time.monotonic()
-            while _pause_event.is_set() and not _shutdown and not _halt_requested.is_set():
+            while _pause_event.is_set() and not _shutdown and not _stop_event.is_set() and not _halt_requested.is_set():
                 if time.monotonic() - pause_start >= config.PAUSE_IDLE_TIMEOUT_S:
                     log.info("Pause idle timeout (%ds) – ending session",
                              config.PAUSE_IDLE_TIMEOUT_S)
@@ -347,6 +347,7 @@ def _run_cycle():
             # Resume with a fresh rpicam-vid process
             if not _stop_event.is_set() and not _shutdown and not _halt_requested.is_set():
                 led.on()
+                time.sleep(1)  # let camera hardware fully release
                 proc, prefix, ext = start_recording()
                 queued.clear()
 

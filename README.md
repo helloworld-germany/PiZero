@@ -102,17 +102,18 @@ binary with **near-zero CPU** usage.
 
 ```
 rpicam-vid --codec libav --libav-format mp4 --libav-audio \
-           --audio-device boosted_mic -o output.mp4
+           --audio-device plughw:0,0 -o output.mp4
 ```
 
 The microphone is selected by `MIC_TYPE` in `capture/config.env`:
 
 | `MIC_TYPE` | ALSA device | Description |
 |------------|-------------|-------------|
-| `i2s` | `boosted_mic` | Boosted I2S mic (default) |
+| `i2s` | `plughw:0,0` | I2S mic via googlevoicehat overlay (default) |
 | `usb` | `default` | Standard USB microphone |
 | `none` | — | No audio |
 
+Audio normalization is handled in the cloud after upload.
 Run `arecord -l` to list available capture devices.
 
 ## Audio Hardware Configuration
@@ -134,39 +135,15 @@ arecord -l
 # card 0: sndrpigooglevoi [...], device 0: ...
 ```
 
-### Software gain boost (`boosted_mic`)
-
-I2S microphones like the INMP441 are very quiet at their raw output
-level. The file `provision/asoundrc` adds a single `softvol` plugin
-on top of the hardware device, giving you up to +50 dB of clean gain:
-
-```
-pcm.boosted_mic {
-    type softvol
-    slave.pcm "plughw:0,0"
-    control { name "I2S Boost"; card 0 }
-    min_dB -5.0
-    max_dB 50.0
-}
-```
-
-Setup (once per Pi):
+Test recording:
 
 ```bash
-cp provision/asoundrc ~/.asoundrc
-arecord -D boosted_mic -d 1 /dev/null   # creates the mixer control
-amixer -D boosted_mic sset 'I2S Boost' 100%
-sudo alsactl store
-```
-
-Test:
-
-```bash
-arecord -D boosted_mic -f S32_LE -r 48000 -c 2 -d 3 test.wav
+arecord -D plughw:0,0 -f S32_LE -r 48000 -c 2 -d 3 test.wav
 aplay test.wav
 ```
 
-Reduce from `100%` if you hear clipping/distortion.
+The raw I2S audio will be quiet – this is normal. Volume normalization
+happens server-side after upload.
 
 ### USB microphone (alternative)
 
@@ -239,6 +216,4 @@ capture/
   buzzer.py         # GPIO piezo buzzer (PWM tonal feedback)
 setup.sh            # one-shot Pi setup (sudo required)
 requirements.txt    # Python dependencies
-provision/
-  asoundrc          # ALSA software gain boost (→ ~/.asoundrc)
 ```

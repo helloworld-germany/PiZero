@@ -58,8 +58,8 @@ def preferred_audio_device() -> str | None:
 
     if mic_type == "i2s":
         if _any_capture_card():
-            log.info("I2S mic selected, capture card found – using boosted_mic")
-            return "boosted_mic"
+            log.info("I2S mic selected, capture card found – using plughw:0,0")
+            return "plughw:0,0"
         log.warning("I2S mic selected but no capture card found")
         return None
 
