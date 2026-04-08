@@ -12,6 +12,7 @@ import glob
 import logging
 import signal as _signal
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -91,16 +92,39 @@ def start_recording(
 
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                             stderr=subprocess.PIPE)
+
+    # Drain stderr in background to prevent pipe-buffer deadlock.
+    # Stores last N bytes for diagnostics after the process exits.
+    proc._stderr_buf = b""
+    proc._stderr_lock = threading.Lock()
+
+    def _drain():
+        buf = b""
+        try:
+            while True:
+                data = proc.stderr.read(4096)
+                if not data:
+                    break
+                buf = (buf + data)[-4096:]  # keep last 4 KB
+        except Exception:
+            pass
+        with proc._stderr_lock:
+            proc._stderr_buf = buf
+
+    t = threading.Thread(target=_drain, daemon=True)
+    t.start()
+
     return proc, prefix, ext
 
 
 def drain_stderr(proc: subprocess.Popen) -> str:
-    """Read and return any remaining stderr from *proc* (non-blocking safe after exit)."""
+    """Return captured stderr from the background drain thread."""
     try:
-        data = proc.stderr.read()
+        with proc._stderr_lock:
+            data = proc._stderr_buf
         if data:
             return data.decode(errors="replace").strip()
-    except Exception:
+    except (AttributeError, Exception):
         pass
     return ""
 
