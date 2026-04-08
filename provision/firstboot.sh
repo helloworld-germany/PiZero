@@ -72,6 +72,10 @@ SVCEOF
 sudo systemctl daemon-reload
 sudo systemctl enable picapture.service
 
+# Deploy .asoundrc for software mic gain boost (boosted_mic device)
+cp /home/pi/PiZero/provision/asoundrc /home/pi/.asoundrc
+chown pi:pi /home/pi/.asoundrc
+
 # Ensure ALSA mixer settings are restored on boot (alsa-restore.service)
 sudo systemctl enable alsa-restore.service 2>/dev/null || true
 

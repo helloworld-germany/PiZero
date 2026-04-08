@@ -31,7 +31,7 @@ from . import buzzer
 from . import button
 from .camera import create_camera, configure_qr_mode
 from .qr_scanner import run_scanner
-from .recorder import start_recording, stop_recording, find_ready_chunks, find_all_chunks
+from .recorder import start_recording, stop_recording, find_ready_chunks, find_all_chunks, drain_stderr
 from .uploader import upload_recording, finish_session, connect_session, notify_pause
 
 logging.basicConfig(
@@ -187,8 +187,8 @@ def main():
     log.info("  API: %s", config.API_BASE_URL)
     log.info("  Chunk duration: %ds", config.RECORD_DURATION_S)
     log.info("  Hard timeout: %ds", config.HARD_TIMEOUT_S)
-    log.info("  Button: %s  Buzzer: %s  I2S mic: %s",
-             config.USE_BUTTON, config.USE_BUZZER, config.USE_I2S_MIC)
+    log.info("  Button: %s  Buzzer: %s  Mic: %s",
+             config.USE_BUTTON, config.USE_BUZZER, config.MIC_TYPE)
     log.info("══════════════════════════════════════════")
 
     try:
@@ -287,6 +287,7 @@ def _run_cycle():
     upload_thread.start()
 
     # ── Continuous recording with --segment ───────────────────────
+    audio_device = True  # tracks whether audio is enabled; set False on audio-related crash
     proc, prefix, ext = start_recording()
     queued = set()       # paths already sent to upload_q
     chunk_index = 0
@@ -309,7 +310,17 @@ def _run_cycle():
 
         # Check if rpicam-vid crashed
         if proc.poll() is not None:
-            log.error("rpicam-vid exited unexpectedly (rc=%d)", proc.returncode)
+            stderr = drain_stderr(proc)
+            log.error("rpicam-vid exited unexpectedly (rc=%d)%s",
+                      proc.returncode,
+                      f" – stderr: {stderr[-500:]}" if stderr else "")
+            # Retry once without audio (common failure: ALSA device unusable)
+            if audio_device is not None:
+                log.warning("Retrying without audio …")
+                audio_device = None
+                proc, prefix, ext = start_recording(audio_override=False)
+                queued.clear()
+                continue
             led.error_flash()
             buzzer.error_beep()
             break

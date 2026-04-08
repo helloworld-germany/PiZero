@@ -33,7 +33,8 @@ The Pi acts as an autonomous recording device that replaces the phone/browser
 |-----------|-------|
 | Raspberry Pi Zero 2 W | Also works on Pi 3/4/5 |
 | Pi Camera Module 3 | Connected via ribbon cable |
-| USB microphone | Any ALSA-compatible device |
+| I2S microphone (INMP441) | Default: via Google voiceHAT overlay on `hw:0,0` |
+| USB microphone (alternative) | Plugs in as `hw:1,0` |
 | Status LED (optional) | GPIO 17, simple on/off feedback |
 | Piezo buzzer (optional) | GPIO 23, tonal PWM feedback |
 
@@ -42,12 +43,21 @@ The Pi acts as an autonomous recording device that replaces the phone/browser
 ```
 Pi GPIO 17 ──┤330Ω├── LED (+) ── GND
 Pi GPIO 23 ────────── Buzzer (+) ── GND
+
+I2S INMP441:
+  BCLK/SCK  → GPIO 18 (pin 12)
+  WS/LRCLK  → GPIO 19 (pin 35)
+  SD/DOUT   → GPIO 20 (pin 38)
+  VDD       → 3.3 V
+  GND       → GND
+  L/R       → GND (left channel)
 ```
 
 - **LED**: Any standard 3mm/5mm LED with a 330Ω resistor in series. Long leg (anode) toward the resistor, short leg (cathode) to GND.
 - **Buzzer**: Passive piezo buzzer (PWM-driven for tonal feedback). `+` to GPIO, `−` to GND. No resistor needed.
+- **I2S mic**: INMP441 or SPH0645. Directly soldered, no external board needed. Exposed via the `googlevoicehat-soundcard` overlay.
 
-Both are optional — the software no-ops gracefully without them.
+LED and buzzer are optional — the software no-ops gracefully without them.
 
 ## Quick Start
 
@@ -79,7 +89,7 @@ All settings live in `capture/config.env` (or as environment variables):
 | `VIDEO_FPS` | `30` | Capture frame rate |
 | `QR_SCAN_WIDTH` / `QR_SCAN_HEIGHT` | `480` / `480` | QR scanner resolution |
 | `QR_SCAN_FPS` | `15` | Idle scanner frame rate |
-| `AUDIO_DEVICE` | `default` | ALSA device (`arecord -l` to list) |
+| `MIC_TYPE` | `i2s` | Microphone: `i2s`, `usb`, or `none` |
 | `CAPTURE_DIR` | `/run/picapture` | Capture directory (tmpfs RAM disk) |
 | `PAUSE_IDLE_TIMEOUT_S` | `60` | Auto-end session after this many seconds paused |
 | `LED_PIN` | `17` | BCM GPIO pin for status LED |
@@ -93,28 +103,91 @@ binary with **near-zero CPU** usage.
 
 ```
 rpicam-vid --codec libav --libav-format mp4 --libav-audio \
-           --audio-device <AUDIO_DEVICE> -o output.mp4
+           --audio-device boosted_mic -o output.mp4
 ```
 
-The microphone is configurable via `AUDIO_DEVICE` in `capture/config.env`.
-Set it to your ALSA device (e.g. `default`, `hw:0,0` for I2S, `hw:1,0` for
-USB mic). Run `arecord -l` to list available capture devices.
+The microphone is selected by `MIC_TYPE` in `capture/config.env`:
+
+| `MIC_TYPE` | ALSA device | Description |
+|------------|-------------|-------------|
+| `i2s` | `boosted_mic` | Boosted I2S mic (default) |
+| `usb` | `default` | Standard USB microphone |
+| `none` | — | No audio |
+
+Run `arecord -l` to list available capture devices.
 
 ## Audio Hardware Configuration
 
-Depending on your audio hardware, you may need to edit `/boot/config.txt`
-(or `/boot/firmware/config.txt` on newer OS images) to enable the correct
-audio overlay. For example, to use the Google AIY Voice Hat sound card:
+### I2S microphone (default)
+
+Enable the Google voiceHAT overlay in `/boot/firmware/config.txt`
+(or `/boot/config.txt` on older images):
 
 ```
-# Enable I2S audio interface
 dtparam=i2s=on
 dtoverlay=googlevoicehat-soundcard
 ```
 
-After editing, reboot the Pi for changes to take effect. Use `arecord -l` to
-verify the device is detected, then set `AUDIO_DEVICE` in `capture/config.env`
-accordingly.
+Reboot, then verify:
+
+```bash
+arecord -l
+# card 0: sndrpigooglevoi [...], device 0: ...
+```
+
+### Software gain boost (`boosted_mic`)
+
+I2S microphones like the INMP441 are often very quiet at their default
+level. The file `provision/asoundrc` defines a virtual ALSA device
+called `boosted_mic` that applies 5× software gain:
+
+```
+pcm.boosted_mic {
+    type route
+    slave.pcm "plughw:0,0"
+    ttable.0.0 5.0
+    ttable.1.1 5.0
+}
+```
+
+This is deployed automatically by `firstboot.sh` to `/home/pi/.asoundrc`.
+To install manually:
+
+```bash
+cp provision/asoundrc ~/.asoundrc
+```
+
+Then set in `capture/config.env`:
+
+```bash
+MIC_TYPE=i2s
+```
+
+Test it:
+
+```bash
+arecord -D boosted_mic -f S32_LE -r 48000 -c 2 -d 3 test.wav
+aplay test.wav
+```
+
+Adjust the gain by editing `~/.asoundrc` — change `5.0` to a higher
+value (e.g. `10.0`) if still too quiet, or lower (e.g. `3.0`) if
+clipping.
+
+### USB microphone (alternative)
+
+Plug in a USB mic and check:
+
+```bash
+arecord -l
+# card 1: ..., device 0: ...
+```
+
+Then configure:
+
+```bash
+MIC_TYPE=usb
+```
 
 ## RAM Disk for Recordings
 
@@ -165,10 +238,15 @@ capture/
   config.env        # editable configuration
   camera.py         # picamera2 QR-scan mode
   qr_scanner.py     # low-power QR detection (pyzbar)
+  mic.py            # audio device selection (I2S / ALSA / auto)
   recorder.py       # rpicam-vid native H.264+audio capture
   uploader.py       # HTTP upload & session finish
   led.py            # GPIO LED feedback
   buzzer.py         # GPIO piezo buzzer (PWM tonal feedback)
 setup.sh            # one-shot Pi setup (sudo required)
 requirements.txt    # Python dependencies
+provision/
+  asoundrc          # ALSA software gain boost (→ ~/.asoundrc)
+  firstboot.sh      # first-boot provisioning for fresh SD cards
+  prepare-sd.sh     # SD card image preparation
 ```

@@ -1,8 +1,8 @@
 """
-I2S microphone capability detector / audio device selector.
+Microphone capability detector / audio device selector.
 
 Helps recorder.py choose the right ALSA capture device based on
-configuration (AUDIO_BACKEND, USE_I2S_MIC, I2S_AUDIO_DEVICE).
+MIC_TYPE config: "i2s" (default), "usb", or "none".
 
 Does NOT record audio itself – that remains the job of recorder.py.
 
@@ -23,31 +23,6 @@ from . import config
 log = logging.getLogger(__name__)
 
 
-def _alsa_device_available(device: str) -> bool:
-    """Return True if *device* appears usable as an ALSA capture source."""
-    # I2S mics (e.g. INMP441) require specific format/rate/channels.
-    # Try several combinations to find one that works.
-    probes = [
-        ("-f", "S32_LE", "-r", "48000", "-c", "2"),
-        ("-f", "S32_LE", "-r", "16000", "-c", "1"),
-        ("-f", "S16_LE", "-r", "16000", "-c", "1"),
-        ("-f", "S16_LE", "-r", "44100", "-c", "1"),
-    ]
-    for params in probes:
-        try:
-            result = subprocess.run(
-                ["arecord", "-D", device, "-d", "0", *params, "/dev/null"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                return True
-        except Exception:
-            pass
-    return False
-
-
 def _any_capture_card() -> bool:
     """Return True if arecord lists at least one capture card."""
     try:
@@ -64,64 +39,36 @@ def _any_capture_card() -> bool:
 
 def has_audio_input() -> bool:
     """Return True if *any* audio capture device is available."""
-    device = preferred_audio_device()
-    if device is None:
-        return False
-    return True
+    return preferred_audio_device() is not None
 
 
 def preferred_audio_device() -> str | None:
+    """Return the ALSA device string to use for recording, or None.
+
+    MIC_TYPE selects the device:
+      - "i2s":  boosted I2S mic via plughw (default)
+      - "usb":  standard USB / ALSA mic ("default" device)
+      - "none": no microphone
     """
-    Return the ALSA device string to use for recording, or None.
+    mic_type = config.MIC_TYPE
 
-    Selection logic based on AUDIO_BACKEND config:
-      - "i2s":  use I2S device; None if unavailable
-      - "alsa": use AUDIO_DEVICE; None if unavailable
-      - "auto": prefer I2S if enabled & available, else fall back to ALSA
-    """
-    backend = config.AUDIO_BACKEND.lower().strip()
-
-    if backend == "i2s":
-        return _try_i2s()
-
-    if backend == "alsa":
-        return _try_alsa()
-
-    # auto
-    if config.USE_I2S_MIC:
-        dev = _try_i2s()
-        if dev is not None:
-            return dev
-        log.info("I2S mic enabled but not available – falling back to ALSA")
-
-    return _try_alsa()
-
-
-def _try_i2s() -> str | None:
-    if not config.USE_I2S_MIC:
-        log.debug("I2S mic not enabled")
+    if mic_type == "none":
+        log.info("MIC_TYPE=none – audio disabled")
         return None
-    dev = config.I2S_AUDIO_DEVICE
-    # plughw: handles ALSA format/rate conversion automatically
-    plug_dev = dev.replace("hw:", "plughw:") if dev.startswith("hw:") else dev
-    # For I2S (especially googlevoicehat driver), zero-length arecord probes
-    # are unreliable.  If the user explicitly enabled I2S and a capture card
-    # exists, trust the config and return the plughw: device.
-    if _any_capture_card():
-        log.info("I2S mic enabled, capture card found – using %s", plug_dev)
-        return plug_dev
-    log.warning("I2S mic enabled but no capture card found")
-    return None
 
+    if mic_type == "i2s":
+        if _any_capture_card():
+            log.info("I2S mic selected, capture card found – using boosted_mic")
+            return "boosted_mic"
+        log.warning("I2S mic selected but no capture card found")
+        return None
 
-def _try_alsa() -> str | None:
-    dev = config.AUDIO_DEVICE
-    if _alsa_device_available(dev):
-        log.debug("ALSA audio device available: %s", dev)
-        return dev
-    # Fall back to checking if any card exists at all
-    if _any_capture_card():
-        log.debug("ALSA device '%s' failed probe but cards exist – trying anyway", dev)
-        return dev
-    log.debug("No ALSA capture devices found")
+    if mic_type == "usb":
+        if _any_capture_card():
+            log.info("USB mic selected – using default ALSA device")
+            return "default"
+        log.warning("USB mic selected but no capture card found")
+        return None
+
+    log.error("Unknown MIC_TYPE=%r – treating as none", mic_type)
     return None

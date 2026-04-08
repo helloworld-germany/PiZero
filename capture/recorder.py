@@ -38,17 +38,29 @@ def _ensure_capture_dir() -> Path:
 def start_recording(
     chunk_duration: int | None = None,
     prefix: str | None = None,
+    audio_override: bool | None = None,
 ) -> tuple[subprocess.Popen, str, str]:
     """Start continuous rpicam-vid recording with ``--segment``.
 
     Returns ``(proc, prefix, ext)`` where *proc* is the Popen handle,
     *prefix* identifies this recording stretch in filenames, and *ext*
     is ``"mkv"`` (with audio) or ``"mp4"`` (video-only).
+
+    *audio_override*: ``True`` = force audio on, ``False`` = force off,
+    ``None`` (default) = auto-detect via mic.py.
     """
     chunk_duration = chunk_duration or config.RECORD_DURATION_S
     cap_dir = _ensure_capture_dir()
     prefix = prefix or str(int(time.time() * 1000))
-    audio_device = _resolve_audio_device()
+
+    if audio_override is None:
+        audio_device = _resolve_audio_device()
+    elif audio_override:
+        audio_device = _resolve_audio_device()
+    else:
+        audio_device = None
+        log.info("Audio disabled by override")
+
     ext = "mkv" if audio_device else "mp4"
 
     output_pattern = str(cap_dir / f"{prefix}_chunk_%04d.{ext}")
@@ -77,6 +89,17 @@ def start_recording(
     return proc, prefix, ext
 
 
+def drain_stderr(proc: subprocess.Popen) -> str:
+    """Read and return any remaining stderr from *proc* (non-blocking safe after exit)."""
+    try:
+        data = proc.stderr.read()
+        if data:
+            return data.decode(errors="replace").strip()
+    except Exception:
+        pass
+    return ""
+
+
 def stop_recording(proc: subprocess.Popen) -> None:
     """Gracefully stop rpicam-vid (SIGINT for clean file finalization)."""
     if proc is None or proc.poll() is not None:
@@ -88,7 +111,7 @@ def stop_recording(proc: subprocess.Popen) -> None:
         log.warning("rpicam-vid did not exit – killing")
         proc.kill()
         proc.wait(timeout=5)
-    stderr = proc.stderr.read().decode(errors="replace")
+    stderr = drain_stderr(proc)
     if stderr:
         log.debug("rpicam-vid stderr: %s", stderr[-500:])
 

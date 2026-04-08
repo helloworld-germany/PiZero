@@ -38,9 +38,8 @@ QR_SCAN_WIDTH = int(os.environ.get("QR_SCAN_WIDTH", "480"))
 QR_SCAN_HEIGHT = int(os.environ.get("QR_SCAN_HEIGHT", "480"))
 QR_SCAN_FPS = int(os.environ.get("QR_SCAN_FPS", "15"))
 
-# Audio device (ALSA hw id, e.g. "hw:1,0" for USB mic)
-AUDIO_DEVICE = os.environ.get("AUDIO_DEVICE", "default")
-AUDIO_SAMPLE_RATE = int(os.environ.get("AUDIO_SAMPLE_RATE", "44100"))
+# Microphone type: "i2s" (default, boosted I2S), "usb", or "none"
+MIC_TYPE = os.environ.get("MIC_TYPE", "i2s").lower().strip()
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -67,16 +66,7 @@ USE_BUTTON = os.environ.get("USE_BUTTON", "false").lower() in ("1", "true", "yes
 BUTTON_PIN = int(os.environ.get("BUTTON_PIN", "3"))  # BCM 3 / physical pin 5
 BUTTON_ACTIVE_LOW = os.environ.get("BUTTON_ACTIVE_LOW", "true").lower() in ("1", "true", "yes")
 
-# ---------------------------------------------------------------------------
-# I2S microphone (optional hardware board)
-#   BCLK/SCK: GPIO18, WS/LRCLK: GPIO19, SD/DOUT: GPIO20
-#   VDD: 3.3V, GND: GND
-# ---------------------------------------------------------------------------
-USE_I2S_MIC = os.environ.get("USE_I2S_MIC", "false").lower() in ("1", "true", "yes")
-I2S_AUDIO_DEVICE = os.environ.get("I2S_AUDIO_DEVICE", "default")
 
-# Audio backend selection: "auto", "alsa", "i2s"
-AUDIO_BACKEND = os.environ.get("AUDIO_BACKEND", "auto")
 
 # ---------------------------------------------------------------------------
 # Session limits

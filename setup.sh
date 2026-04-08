@@ -66,19 +66,10 @@ echo "    2) USB  (any USB microphone)"
 read -rp "  Choose [1]: " mic_choice
 mic_choice="${mic_choice:-1}"
 if [[ "$mic_choice" == "2" ]]; then
-    echo ""
-    echo "  Available capture devices:"
-    arecord -l 2>/dev/null || echo "    (none detected – plug in your USB mic and re-run)"
-    echo ""
-    read -rp "  ALSA device (e.g. hw:1,0) [default]: " usb_dev
-    usb_dev="${usb_dev:-default}"
-    sed -i "s|^AUDIO_BACKEND=.*|AUDIO_BACKEND=alsa|"     "$CONFIG_FILE"
-    sed -i "s|^AUDIO_DEVICE=.*|AUDIO_DEVICE=$usb_dev|"   "$CONFIG_FILE"
-    sed -i "s|^USE_I2S_MIC=.*|USE_I2S_MIC=false|"        "$CONFIG_FILE"
-    echo "  ✓ USB mic → AUDIO_DEVICE=$usb_dev"
+    sed -i "s|^MIC_TYPE=.*|MIC_TYPE=usb|" "$CONFIG_FILE"
+    echo "  ✓ USB mic"
 else
-    sed -i "s|^AUDIO_BACKEND=.*|AUDIO_BACKEND=i2s|"       "$CONFIG_FILE"
-    sed -i "s|^USE_I2S_MIC=.*|USE_I2S_MIC=true|"          "$CONFIG_FILE"
+    sed -i "s|^MIC_TYPE=.*|MIC_TYPE=i2s|" "$CONFIG_FILE"
     echo "  ✓ I2S mic (INMP441)"
 
     # ── Configure /boot/config.txt for I2S audio ──────────────────
@@ -195,12 +186,12 @@ fi
 read -rp "  Test microphone? (will record 2 seconds) [Y/n]: " test_mic
 if [[ ! "$test_mic" =~ ^[Nn]$ ]]; then
     # Determine ALSA device from config
-    mic_dev=$(grep "^AUDIO_DEVICE=" "$CONFIG_FILE" | cut -d= -f2)
-    mic_dev="${mic_dev:-default}"
-    i2s_dev=$(grep "^I2S_AUDIO_DEVICE=" "$CONFIG_FILE" | cut -d= -f2)
-    use_i2s=$(grep "^USE_I2S_MIC=" "$CONFIG_FILE" | cut -d= -f2)
-    if [[ "$use_i2s" == "true" && -n "$i2s_dev" ]]; then
-        mic_dev="$i2s_dev"
+    mic_type=$(grep "^MIC_TYPE=" "$CONFIG_FILE" | cut -d= -f2)
+    mic_type="${mic_type:-i2s}"
+    if [[ "$mic_type" == "i2s" ]]; then
+        mic_dev="boosted_mic"
+    else
+        mic_dev="default"
     fi
 
     echo "  Recording 2s from $mic_dev …"
