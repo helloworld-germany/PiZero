@@ -186,12 +186,13 @@ buzzer.cleanup()
     fi
 fi
 
+# Determine mic type from config (used by mic test and ALSA gain sections)
+mic_type=$(grep "^MIC_TYPE=" "$CONFIG_FILE" | cut -d= -f2)
+mic_type="${mic_type:-i2s}"
+
 # Microphone test
 read -rp "  Test microphone? (will record 2 seconds) [Y/n]: " test_mic
 if [[ ! "$test_mic" =~ ^[Nn]$ ]]; then
-    # Determine ALSA device from config
-    mic_type=$(grep "^MIC_TYPE=" "$CONFIG_FILE" | cut -d= -f2)
-    mic_type="${mic_type:-i2s}"
     if [[ "$mic_type" == "usb" ]]; then
         # Find the USB capture card number
         usb_card=$(arecord -l 2>/dev/null | grep -i "^card.*usb" | head -1 | sed 's/card \([0-9]*\):.*/\1/')
