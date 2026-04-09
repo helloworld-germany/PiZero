@@ -144,7 +144,10 @@ def _on_vlong_press():
 def _cleanup_stale_chunks():
     """Remove leftover files from a previous crash to free RAM disk space."""
     try:
-        stale = list(config.CAPTURE_DIR.glob("*_chunk_*.mkv")) + \
+        stale = list(config.CAPTURE_DIR.glob("*_vid_*.h264")) + \
+                list(config.CAPTURE_DIR.glob("*_aud_*.wav")) + \
+                list(config.CAPTURE_DIR.glob("*_mux_*.mp4")) + \
+                list(config.CAPTURE_DIR.glob("*_chunk_*.mkv")) + \
                 list(config.CAPTURE_DIR.glob("*_chunk_*.mp4")) + \
                 list(config.CAPTURE_DIR.glob("chunk-*.mp4")) + \
                 list(config.CAPTURE_DIR.glob("chunk-*.mkv")) + \
@@ -286,9 +289,8 @@ def _run_cycle():
     upload_thread = threading.Thread(target=_upload_worker, daemon=True)
     upload_thread.start()
 
-    # ── Continuous recording with --segment ───────────────────────
-    audio_device = True  # tracks whether audio is enabled; set False on audio-related crash
-    proc, prefix, ext = start_recording()
+    # ── Split capture: video (rpicam-vid) + audio (arecord) ─────
+    recorder, prefix, ext = start_recording()
     queued = set()       # paths already sent to upload_q
     chunk_index = 0
 
@@ -308,30 +310,22 @@ def _run_cycle():
             log.warning("Hard timeout (%ds) reached – ending session", config.HARD_TIMEOUT_S)
             break
 
-        # Check if rpicam-vid crashed
-        if proc.poll() is not None:
-            stderr = drain_stderr(proc)
-            log.error("rpicam-vid exited unexpectedly (rc=%d)%s",
-                      proc.returncode,
+        # Check if rpicam-vid crashed (audio runs independently)
+        if not recorder.video_alive():
+            stderr = drain_stderr(recorder)
+            log.error("rpicam-vid exited unexpectedly%s",
                       f" – stderr: {stderr[-500:]}" if stderr else "")
-            # Retry once without audio (common failure: ALSA device unusable)
-            if audio_device is not None:
-                log.warning("Retrying without audio …")
-                audio_device = None
-                proc, prefix, ext = start_recording(audio_override=False)
-                queued.clear()
-                continue
             led.error_flash()
             buzzer.error_beep()
             break
 
-        # Pick up completed chunks (all except the one still being written)
-        _queue_chunks(find_ready_chunks(prefix, ext))
+        # Pick up completed & muxed chunks
+        _queue_chunks(find_ready_chunks(recorder))
 
         # ── Handle pause ──────────────────────────────────────────
         if _pause_event.is_set():
-            stop_recording(proc)
-            _queue_chunks(find_all_chunks(prefix, ext))
+            stop_recording(recorder)
+            _queue_chunks(find_all_chunks(recorder))
 
             pause_start = time.monotonic()
             while _pause_event.is_set() and not _shutdown and not _stop_event.is_set() and not _halt_requested.is_set():
@@ -344,11 +338,11 @@ def _run_cycle():
                     break
                 time.sleep(0.25)
 
-            # Resume with a fresh rpicam-vid process
+            # Resume with a fresh recorder
             if not _stop_event.is_set() and not _shutdown and not _halt_requested.is_set():
                 led.on()
                 time.sleep(1)  # let camera hardware fully release
-                proc, prefix, ext = start_recording()
+                recorder, prefix, ext = start_recording()
                 queued.clear()
 
             continue
@@ -361,8 +355,8 @@ def _run_cycle():
         time.sleep(2)
 
     # ── Stop recording & collect final chunks ─────────────────────
-    stop_recording(proc)
-    _queue_chunks(find_all_chunks(prefix, ext))
+    stop_recording(recorder)
+    _queue_chunks(find_all_chunks(recorder))
 
     # ── Drain pending uploads before finishing session ─────────────
     pending = upload_q.qsize()

@@ -20,7 +20,8 @@ sudo apt-get install -y -qq \
     python3-picamera2 \
     rpicam-apps-core \
     libzbar0 \
-    alsa-utils
+    alsa-utils \
+    ffmpeg
 
 # ── Python venv ───────────────────────────────────────────────────
 VENV_DIR="$HOME/.venvs/picapture"

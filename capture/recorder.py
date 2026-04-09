@@ -1,11 +1,20 @@
 """
-Video + audio capture via a single rpicam-vid process with ``--segment``.
+Split video + audio capture for maximum speed and I2S compatibility.
 
-rpicam-vid runs continuously with ``-t 0 --segment <ms>`` and produces
-gapless, individually-decodable chunks (``--inline``).  Audio is muxed
-inline via ``--audio-source`` / ``--audio-device``.  No arecord, no ffmpeg, no post-processing.
+Architecture:
+    VIDEO  – rpicam-vid writes short H.264 segments (``--segment``) to a
+             RAM-backed tmpfs.  No audio flags, no ALSA interaction.
+    AUDIO  – ``arecord`` (ALSA / I2S) writes matching WAV chunks
+             independently on a separate thread.
+    MUX    – Once both files for a chunk index exist, ``ffmpeg`` muxes them
+             with ``-c:v copy`` (no re-encode) into a final ``.mp4``.
 
-Capture gain is set system-wide via ALSA mixer (alsamixer + alsactl store).
+Benefits over the old single-process approach:
+    • rpicam-vid never touches ALSA → eliminates I2S audio crashes.
+    • Each capture runs at native speed; no blocking on the other.
+    • Short-lived files on tmpfs → minimal I/O and memory pressure.
+    • One fast mux step (video passthrough) → low CPU.
+    • Immediate upload + delete after mux → frees RAM disk instantly.
 """
 
 import glob
@@ -36,129 +45,334 @@ def _ensure_capture_dir() -> Path:
     return config.CAPTURE_DIR
 
 
+# ──────────────────────────────────────────────────────────────────
+# SplitRecorder – manages parallel video + audio capture
+# ──────────────────────────────────────────────────────────────────
+
+class SplitRecorder:
+    """Parallel video (rpicam-vid) + audio (arecord) recorder."""
+
+    def __init__(
+        self,
+        chunk_duration: int | None = None,
+        prefix: str | None = None,
+        audio_enabled: bool = True,
+    ):
+        self.chunk_duration = chunk_duration or config.RECORD_DURATION_S
+        self.prefix = prefix or str(int(time.time() * 1000))
+        self.cap_dir = _ensure_capture_dir()
+
+        self.audio_device: str | None = (
+            _resolve_audio_device() if audio_enabled else None
+        )
+
+        # Video process
+        self._vid_proc: subprocess.Popen | None = None
+        self._vid_stderr_buf = b""
+        self._vid_stderr_lock = threading.Lock()
+
+        # Audio thread + process
+        self._aud_thread: threading.Thread | None = None
+        self._aud_stop = threading.Event()
+        self._aud_proc: subprocess.Popen | None = None
+        self._aud_lock = threading.Lock()
+
+    # ── public properties ─────────────────────────────────────────
+
+    @property
+    def has_audio(self) -> bool:
+        return self.audio_device is not None
+
+    def video_alive(self) -> bool:
+        return self._vid_proc is not None and self._vid_proc.poll() is None
+
+    def video_stderr(self) -> str:
+        with self._vid_stderr_lock:
+            data = self._vid_stderr_buf
+        return data.decode(errors="replace").strip() if data else ""
+
+    # ── start / stop ──────────────────────────────────────────────
+
+    def start(self) -> None:
+        self._start_video()
+        if self.audio_device:
+            self._start_audio()
+        log.info(
+            "Split capture started (segment=%ds, audio=%s)",
+            self.chunk_duration,
+            self.audio_device or "(none)",
+        )
+
+    def stop(self) -> None:
+        self._stop_video()
+        self._stop_audio()
+        log.info("Split capture stopped")
+
+    # ── video ─────────────────────────────────────────────────────
+
+    def _start_video(self) -> None:
+        output_pattern = str(
+            self.cap_dir / f"{self.prefix}_vid_%04d.h264"
+        )
+        cmd = [
+            "rpicam-vid",
+            "-t", "0",
+            "--segment", str(self.chunk_duration * 1000),
+            "--inline",
+            "--codec", "h264",
+            "--width", str(config.VIDEO_WIDTH),
+            "--height", str(config.VIDEO_HEIGHT),
+            "--framerate", str(config.VIDEO_FPS),
+            "--bitrate", str(config.VIDEO_BITRATE),
+            "-n",
+            "-o", output_pattern,
+        ]
+        log.debug("rpicam-vid command: %s", " ".join(cmd))
+        self._vid_proc = subprocess.Popen(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        )
+
+        # Drain stderr in background to prevent pipe-buffer deadlock
+        def _drain():
+            buf = b""
+            try:
+                while True:
+                    data = self._vid_proc.stderr.read(4096)
+                    if not data:
+                        break
+                    buf = (buf + data)[-4096:]
+            except Exception:
+                pass
+            with self._vid_stderr_lock:
+                self._vid_stderr_buf = buf
+
+        threading.Thread(target=_drain, daemon=True).start()
+
+    def _stop_video(self) -> None:
+        proc = self._vid_proc
+        if proc is None or proc.poll() is not None:
+            return
+        proc.send_signal(_signal.SIGINT)
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            log.warning("rpicam-vid did not exit – killing")
+            proc.kill()
+            proc.wait(timeout=5)
+        stderr = self.video_stderr()
+        if stderr:
+            log.debug("rpicam-vid stderr: %s", stderr[-500:])
+
+    # ── audio ─────────────────────────────────────────────────────
+
+    def _start_audio(self) -> None:
+        self._aud_stop.clear()
+        self._aud_thread = threading.Thread(
+            target=self._audio_loop, daemon=True,
+        )
+        self._aud_thread.start()
+
+    def _audio_loop(self) -> None:
+        """Record sequential WAV chunks via arecord, one per segment."""
+        chunk_idx = 1  # rpicam-vid %04d starts at 0001
+        while not self._aud_stop.is_set():
+            output = self.cap_dir / f"{self.prefix}_aud_{chunk_idx:04d}.wav"
+            cmd = [
+                "arecord",
+                "-D", self.audio_device,
+                "-f", config.AUDIO_FORMAT,
+                "-r", str(config.AUDIO_SAMPLE_RATE),
+                "-c", str(config.AUDIO_CHANNELS),
+                "-d", str(self.chunk_duration),
+                str(output),
+            ]
+            log.debug("Audio chunk %d: %s", chunk_idx, " ".join(cmd))
+            try:
+                with self._aud_lock:
+                    if self._aud_stop.is_set():
+                        break
+                    self._aud_proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                    )
+                self._aud_proc.wait()
+                rc = self._aud_proc.returncode
+                if rc != 0 and not self._aud_stop.is_set():
+                    stderr = self._aud_proc.stderr.read()
+                    log.error(
+                        "arecord exited %d: %s", rc,
+                        stderr.decode(errors="replace")[:500],
+                    )
+                    break
+            except Exception:
+                if not self._aud_stop.is_set():
+                    log.exception("Audio recording error on chunk %d", chunk_idx)
+                break
+            chunk_idx += 1
+
+    def _stop_audio(self) -> None:
+        self._aud_stop.set()
+        with self._aud_lock:
+            proc = self._aud_proc
+        if proc and proc.poll() is None:
+            proc.send_signal(_signal.SIGINT)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=3)
+        if self._aud_thread and self._aud_thread.is_alive():
+            self._aud_thread.join(timeout=10)
+
+    # ── chunk discovery ───────────────────────────────────────────
+
+    def find_ready_video_chunks(self) -> list[Path]:
+        """Completed video segments (all except the one being written)."""
+        pattern = str(self.cap_dir / f"{self.prefix}_vid_*.h264")
+        files = sorted(glob.glob(pattern))
+        return [Path(f) for f in files[:-1]] if len(files) > 1 else []
+
+    def find_all_video_chunks(self) -> list[Path]:
+        """All video segments (call after stop)."""
+        pattern = str(self.cap_dir / f"{self.prefix}_vid_*.h264")
+        return [Path(f) for f in sorted(glob.glob(pattern))]
+
+    def find_audio_chunk(self, video_chunk: Path) -> Path | None:
+        """Return the matching audio WAV for a video chunk, or None."""
+        idx = video_chunk.stem.rsplit("_", 1)[-1]  # e.g. "0001"
+        audio_path = self.cap_dir / f"{self.prefix}_aud_{idx}.wav"
+        return audio_path if audio_path.exists() else None
+
+    def find_ready_pairs(self) -> list[tuple[Path, Path | None]]:
+        """Pairs whose video is complete and (if audio enabled) audio exists.
+
+        Returns ``[(video_path, audio_path_or_None), ...]``.
+        """
+        pairs: list[tuple[Path, Path | None]] = []
+        for vid in self.find_ready_video_chunks():
+            if self.audio_device:
+                aud = self.find_audio_chunk(vid)
+                if aud is not None:
+                    pairs.append((vid, aud))
+                # else: audio not yet flushed – skip, will pick up next poll
+            else:
+                pairs.append((vid, None))
+        return pairs
+
+    def find_all_pairs(self) -> list[tuple[Path, Path | None]]:
+        """All pairs including the final chunk (call after stop)."""
+        pairs: list[tuple[Path, Path | None]] = []
+        for vid in self.find_all_video_chunks():
+            aud = self.find_audio_chunk(vid) if self.audio_device else None
+            pairs.append((vid, aud))
+        return pairs
+
+
+# ──────────────────────────────────────────────────────────────────
+# ffmpeg mux (video passthrough, no re-encode)
+# ──────────────────────────────────────────────────────────────────
+
+def mux_chunk(video_path: Path, audio_path: Path | None) -> Path:
+    """Mux one video + audio pair into ``.mp4`` (``-c:v copy``).
+
+    If *audio_path* is ``None``, wraps the raw H.264 in an MP4 container.
+    Deletes source files on success to free RAM disk space.
+    Returns the path of the muxed file.
+    """
+    stem = video_path.stem.replace("_vid_", "_mux_")
+    output = video_path.parent / f"{stem}.mp4"
+
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "warning"]
+    cmd += ["-i", str(video_path)]
+
+    if audio_path:
+        cmd += ["-i", str(audio_path)]
+        cmd += [
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", config.AUDIO_AAC_BITRATE,
+            "-shortest",
+        ]
+    else:
+        cmd += ["-c:v", "copy"]
+
+    cmd += [str(output)]
+
+    log.debug("Muxing: %s", " ".join(cmd))
+    result = subprocess.run(cmd, capture_output=True, timeout=60)
+
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace")[:500]
+        log.error("ffmpeg mux failed (rc=%d): %s", result.returncode, stderr)
+        raise RuntimeError(f"ffmpeg mux failed: {stderr}")
+
+    # Free RAM disk space immediately
+    video_path.unlink(missing_ok=True)
+    if audio_path:
+        audio_path.unlink(missing_ok=True)
+
+    log.info("Muxed → %s (%.1f KB)", output.name, output.stat().st_size / 1024)
+    return output
+
+
+# ──────────────────────────────────────────────────────────────────
+# Public API used by main.py
+# ──────────────────────────────────────────────────────────────────
+
 def start_recording(
     chunk_duration: int | None = None,
     prefix: str | None = None,
     audio_override: bool | None = None,
-) -> tuple[subprocess.Popen, str, str]:
-    """Start continuous rpicam-vid recording with ``--segment``.
+) -> tuple["SplitRecorder", str, str]:
+    """Start split recording.
 
-    Returns ``(proc, prefix, ext)`` where *proc* is the Popen handle,
-    *prefix* identifies this recording stretch in filenames, and *ext*
-    is ``"mkv"`` (with audio) or ``"mp4"`` (video-only).
+    Returns ``(recorder, prefix, "mp4")``.
 
-    *audio_override*: ``True`` = force audio on, ``False`` = force off,
-    ``None`` (default) = auto-detect via mic.py.
+    *audio_override*: ``True``/``None`` = auto-detect, ``False`` = no audio.
     """
-    chunk_duration = chunk_duration or config.RECORD_DURATION_S
-    cap_dir = _ensure_capture_dir()
-    prefix = prefix or str(int(time.time() * 1000))
+    audio_enabled = audio_override is not False
+    recorder = SplitRecorder(
+        chunk_duration=chunk_duration,
+        prefix=prefix,
+        audio_enabled=audio_enabled,
+    )
+    recorder.start()
+    return recorder, recorder.prefix, "mp4"
 
-    if audio_override is None:
-        audio_device = _resolve_audio_device()
-    elif audio_override:
-        audio_device = _resolve_audio_device()
-    else:
-        audio_device = None
-        log.info("Audio disabled by override")
 
-    ext = "mkv" if audio_device else "mp4"
+def stop_recording(recorder: "SplitRecorder") -> None:
+    """Gracefully stop both video and audio capture."""
+    if recorder is not None:
+        recorder.stop()
 
-    output_pattern = str(cap_dir / f"{prefix}_chunk_%04d.{ext}")
 
-    cmd = [
-        "rpicam-vid",
-        "-t", "0",                                  # run until stopped
-        "--segment", str(chunk_duration * 1000),     # auto-split interval
-        "--inline",                                  # SPS/PPS per segment
-        "--width", str(config.VIDEO_WIDTH),
-        "--height", str(config.VIDEO_HEIGHT),
-        "--framerate", str(config.VIDEO_FPS),
-        "--bitrate", str(config.VIDEO_BITRATE),
-        "-n",
-        "-o", output_pattern,
-    ]
-    if audio_device:
-        cmd += [
-            "--audio-source", "alsa",
-            "--audio-device", audio_device,
-            "--audio-channels", "1",        # INMP441 = mono (left channel only)
-            "--audio-samplerate", "48000",  # native I2S / voiceHAT rate
-        ]
-
-    log.info("Starting continuous recording (segment=%ds, audio=%s)",
-             chunk_duration, audio_device or "(none)")
-    log.debug("rpicam-vid command: %s", " ".join(cmd))
-
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                            stderr=subprocess.PIPE)
-
-    # Drain stderr in background to prevent pipe-buffer deadlock.
-    # Stores last N bytes for diagnostics after the process exits.
-    proc._stderr_buf = b""
-    proc._stderr_lock = threading.Lock()
-
-    def _drain():
-        buf = b""
+def find_ready_chunks(recorder: "SplitRecorder", _ext: str | None = None) -> list[Path]:
+    """Find completed pairs, mux them, return muxed ``.mp4`` paths."""
+    pairs = recorder.find_ready_pairs()
+    muxed: list[Path] = []
+    for vid, aud in pairs:
         try:
-            while True:
-                data = proc.stderr.read(4096)
-                if not data:
-                    break
-                buf = (buf + data)[-4096:]  # keep last 4 KB
+            muxed.append(mux_chunk(vid, aud))
         except Exception:
-            pass
-        with proc._stderr_lock:
-            proc._stderr_buf = buf
-
-    t = threading.Thread(target=_drain, daemon=True)
-    t.start()
-
-    return proc, prefix, ext
+            log.exception("Mux failed for %s", vid.name)
+    return muxed
 
 
-def drain_stderr(proc: subprocess.Popen) -> str:
-    """Return captured stderr from the background drain thread."""
-    try:
-        with proc._stderr_lock:
-            data = proc._stderr_buf
-        if data:
-            return data.decode(errors="replace").strip()
-    except (AttributeError, Exception):
-        pass
+def find_all_chunks(recorder: "SplitRecorder", _ext: str | None = None) -> list[Path]:
+    """Find all remaining pairs (after stop), mux them, return paths."""
+    pairs = recorder.find_all_pairs()
+    muxed: list[Path] = []
+    for vid, aud in pairs:
+        try:
+            muxed.append(mux_chunk(vid, aud))
+        except Exception:
+            log.exception("Mux failed for %s", vid.name)
+    return muxed
+
+
+def drain_stderr(recorder: "SplitRecorder") -> str:
+    """Return captured rpicam-vid stderr for diagnostics."""
+    if isinstance(recorder, SplitRecorder):
+        return recorder.video_stderr()
     return ""
-
-
-def stop_recording(proc: subprocess.Popen) -> None:
-    """Gracefully stop rpicam-vid (SIGINT for clean file finalization)."""
-    if proc is None or proc.poll() is not None:
-        return
-    proc.send_signal(_signal.SIGINT)
-    try:
-        proc.wait(timeout=15)
-    except subprocess.TimeoutExpired:
-        log.warning("rpicam-vid did not exit – killing")
-        proc.kill()
-        proc.wait(timeout=5)
-    stderr = drain_stderr(proc)
-    if stderr:
-        log.debug("rpicam-vid stderr: %s", stderr[-500:])
-
-
-def find_ready_chunks(prefix: str, ext: str) -> list[Path]:
-    """Return completed chunk paths (all except the one currently being written).
-
-    While rpicam-vid is running, the newest file is still being written to.
-    All older files are complete and safe to upload/delete.
-    """
-    pattern = str(config.CAPTURE_DIR / f"{prefix}_chunk_*.{ext}")
-    files = sorted(glob.glob(pattern))
-    if len(files) > 1:
-        return [Path(f) for f in files[:-1]]
-    return []
-
-
-def find_all_chunks(prefix: str, ext: str) -> list[Path]:
-    """Return all chunk paths for a prefix (call after ``stop_recording``)."""
-    pattern = str(config.CAPTURE_DIR / f"{prefix}_chunk_*.{ext}")
-    return [Path(f) for f in sorted(glob.glob(pattern))]
