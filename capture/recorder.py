@@ -74,6 +74,7 @@ class SplitRecorder:
         # Audio thread + process
         self._aud_thread: threading.Thread | None = None
         self._aud_stop = threading.Event()
+        self._aud_failed = threading.Event()   # set when arecord dies
         self._aud_proc: subprocess.Popen | None = None
         self._aud_lock = threading.Lock()
 
@@ -85,6 +86,10 @@ class SplitRecorder:
 
     def video_alive(self) -> bool:
         return self._vid_proc is not None and self._vid_proc.poll() is None
+
+    def audio_failed(self) -> bool:
+        """True if audio was enabled but the recording thread has died."""
+        return self.audio_device is not None and self._aud_failed.is_set()
 
     def video_stderr(self) -> str:
         with self._vid_stderr_lock:
@@ -174,7 +179,7 @@ class SplitRecorder:
 
     def _audio_loop(self) -> None:
         """Record sequential WAV chunks via arecord, one per segment."""
-        chunk_idx = 1  # rpicam-vid %04d starts at 0001
+        chunk_idx = 0  # rpicam-vid %04d starts at 0000
         while not self._aud_stop.is_set():
             output = self.cap_dir / f"{self.prefix}_aud_{chunk_idx:04d}.wav"
             cmd = [
@@ -204,12 +209,16 @@ class SplitRecorder:
                         "arecord exited %d: %s", rc,
                         stderr.decode(errors="replace")[:500],
                     )
+                    self._aud_failed.set()
                     break
             except Exception:
                 if not self._aud_stop.is_set():
                     log.exception("Audio recording error on chunk %d", chunk_idx)
+                self._aud_failed.set()
                 break
             chunk_idx += 1
+        if self._aud_failed.is_set():
+            log.warning("Audio capture has stopped – video will continue without audio")
 
     def _stop_audio(self) -> None:
         self._aud_stop.set()
@@ -238,33 +247,53 @@ class SplitRecorder:
         pattern = str(self.cap_dir / f"{self.prefix}_vid_*.h264")
         return [Path(f) for f in sorted(glob.glob(pattern))]
 
-    def find_audio_chunk(self, video_chunk: Path) -> Path | None:
-        """Return the matching audio WAV for a video chunk, or None."""
-        idx = video_chunk.stem.rsplit("_", 1)[-1]  # e.g. "0001"
-        audio_path = self.cap_dir / f"{self.prefix}_aud_{idx}.wav"
-        return audio_path if audio_path.exists() else None
+    def _completed_audio_chunks(self) -> list[Path]:
+        """Return all completed audio WAV files, sorted."""
+        pattern = str(self.cap_dir / f"{self.prefix}_aud_*.wav")
+        return [Path(f) for f in sorted(glob.glob(pattern))]
 
     def find_ready_pairs(self) -> list[tuple[Path, Path | None]]:
-        """Pairs whose video is complete and (if audio enabled) audio exists.
+        """Pairs whose video is complete, matched to audio by order.
 
-        Returns ``[(video_path, audio_path_or_None), ...]``.
+        Matching by sorted file order (not index number) is robust against
+        rpicam-vid / arecord starting at different counter values.
+
+        If audio has failed, returns video-only pairs so uploads aren't
+        blocked waiting for audio that will never come.
         """
+        videos = self.find_ready_video_chunks()
+        if not videos:
+            return []
+
+        # No audio, or audio died → video-only
+        if not self.audio_device or self._aud_failed.is_set():
+            return [(v, None) for v in videos]
+
+        audios = self._completed_audio_chunks()
         pairs: list[tuple[Path, Path | None]] = []
-        for vid in self.find_ready_video_chunks():
-            if self.audio_device:
-                aud = self.find_audio_chunk(vid)
-                if aud is not None:
-                    pairs.append((vid, aud))
-                # else: audio not yet flushed – skip, will pick up next poll
-            else:
-                pairs.append((vid, None))
+        for i, vid in enumerate(videos):
+            if i < len(audios):
+                pairs.append((vid, audios[i]))
+            # else: audio not yet flushed – skip, will pick up next poll
         return pairs
 
     def find_all_pairs(self) -> list[tuple[Path, Path | None]]:
-        """All pairs including the final chunk (call after stop)."""
+        """All pairs including the final chunk (call after stop).
+
+        Unmatched videos (e.g. audio cut short) are included with
+        ``audio=None`` so they still get uploaded.
+        """
+        videos = self.find_all_video_chunks()
+        if not videos:
+            return []
+
+        if not self.audio_device or self._aud_failed.is_set():
+            return [(v, None) for v in videos]
+
+        audios = self._completed_audio_chunks()
         pairs: list[tuple[Path, Path | None]] = []
-        for vid in self.find_all_video_chunks():
-            aud = self.find_audio_chunk(vid) if self.audio_device else None
+        for i, vid in enumerate(videos):
+            aud = audios[i] if i < len(audios) else None
             pairs.append((vid, aud))
         return pairs
 

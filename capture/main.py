@@ -303,6 +303,8 @@ def _run_cycle():
                 upload_q.put((chunk, chunk_index))
                 chunk_index += 1
 
+    _audio_warned = False  # only log once per session
+
     while not _shutdown and not _stop_event.is_set() and not _halt_requested.is_set():
         # Hard timeout check
         elapsed = time.monotonic() - session_start
@@ -318,6 +320,11 @@ def _run_cycle():
             led.error_flash()
             buzzer.error_beep()
             break
+
+        # Warn once if audio capture died (video continues)
+        if not _audio_warned and recorder.audio_failed():
+            log.warning("⚠ Audio capture failed – continuing with video-only")
+            _audio_warned = True
 
         # Pick up completed & muxed chunks
         _queue_chunks(find_ready_chunks(recorder))
