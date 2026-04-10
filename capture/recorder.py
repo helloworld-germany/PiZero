@@ -6,15 +6,16 @@ Architecture:
              RAM-backed tmpfs.  No audio flags, no ALSA interaction.
     AUDIO  – ``arecord`` (ALSA / I2S) writes matching WAV chunks
              independently on a separate thread.
-    MUX    – Once both files for a chunk index exist, ``ffmpeg`` muxes them
-             with ``-c:v copy`` (no re-encode) into a final ``.mp4``.
 
-Benefits over the old single-process approach:
+Video and audio files are uploaded separately – no on-device muxing.
+The backend handles combining them.
+
+Benefits:
     • rpicam-vid never touches ALSA → eliminates I2S audio crashes.
     • Each capture runs at native speed; no blocking on the other.
     • Short-lived files on tmpfs → minimal I/O and memory pressure.
-    • One fast mux step (video passthrough) → low CPU.
-    • Immediate upload + delete after mux → frees RAM disk instantly.
+    • No ffmpeg / mux step on device → lower CPU, fewer dependencies.
+    • Immediate upload + delete → frees RAM disk instantly.
 """
 
 import glob
@@ -299,53 +300,6 @@ class SplitRecorder:
 
 
 # ──────────────────────────────────────────────────────────────────
-# ffmpeg mux (video passthrough, no re-encode)
-# ──────────────────────────────────────────────────────────────────
-
-def mux_chunk(video_path: Path, audio_path: Path | None) -> Path:
-    """Mux one video + audio pair into ``.mp4`` (``-c:v copy``).
-
-    If *audio_path* is ``None``, wraps the raw H.264 in an MP4 container.
-    Deletes source files on success to free RAM disk space.
-    Returns the path of the muxed file.
-    """
-    stem = video_path.stem.replace("_vid_", "_mux_")
-    output = video_path.parent / f"{stem}.mp4"
-
-    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "warning"]
-    cmd += ["-i", str(video_path)]
-
-    if audio_path:
-        cmd += ["-i", str(audio_path)]
-        cmd += [
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-b:a", config.AUDIO_AAC_BITRATE,
-            "-shortest",
-        ]
-    else:
-        cmd += ["-c:v", "copy"]
-
-    cmd += [str(output)]
-
-    log.debug("Muxing: %s", " ".join(cmd))
-    result = subprocess.run(cmd, capture_output=True, timeout=60)
-
-    if result.returncode != 0:
-        stderr = result.stderr.decode(errors="replace")[:500]
-        log.error("ffmpeg mux failed (rc=%d): %s", result.returncode, stderr)
-        raise RuntimeError(f"ffmpeg mux failed: {stderr}")
-
-    # Free RAM disk space immediately
-    video_path.unlink(missing_ok=True)
-    if audio_path:
-        audio_path.unlink(missing_ok=True)
-
-    log.info("Muxed → %s (%.1f KB)", output.name, output.stat().st_size / 1024)
-    return output
-
-
-# ──────────────────────────────────────────────────────────────────
 # Public API used by main.py
 # ──────────────────────────────────────────────────────────────────
 
@@ -353,10 +307,8 @@ def start_recording(
     chunk_duration: int | None = None,
     prefix: str | None = None,
     audio_override: bool | None = None,
-) -> tuple["SplitRecorder", str, str]:
-    """Start split recording.
-
-    Returns ``(recorder, prefix, "mp4")``.
+) -> "SplitRecorder":
+    """Start split recording and return the recorder.
 
     *audio_override*: ``True``/``None`` = auto-detect, ``False`` = no audio.
     """
@@ -367,7 +319,7 @@ def start_recording(
         audio_enabled=audio_enabled,
     )
     recorder.start()
-    return recorder, recorder.prefix, "mp4"
+    return recorder
 
 
 def stop_recording(recorder: "SplitRecorder") -> None:
@@ -376,28 +328,24 @@ def stop_recording(recorder: "SplitRecorder") -> None:
         recorder.stop()
 
 
-def find_ready_chunks(recorder: "SplitRecorder", _ext: str | None = None) -> list[Path]:
-    """Find completed pairs, mux them, return muxed ``.mp4`` paths."""
-    pairs = recorder.find_ready_pairs()
-    muxed: list[Path] = []
-    for vid, aud in pairs:
-        try:
-            muxed.append(mux_chunk(vid, aud))
-        except Exception:
-            log.exception("Mux failed for %s", vid.name)
-    return muxed
+def find_ready_chunks(recorder: "SplitRecorder") -> list[Path]:
+    """Return completed files (video + audio) ready for upload."""
+    files: list[Path] = []
+    for vid, aud in recorder.find_ready_pairs():
+        files.append(vid)
+        if aud:
+            files.append(aud)
+    return files
 
 
-def find_all_chunks(recorder: "SplitRecorder", _ext: str | None = None) -> list[Path]:
-    """Find all remaining pairs (after stop), mux them, return paths."""
-    pairs = recorder.find_all_pairs()
-    muxed: list[Path] = []
-    for vid, aud in pairs:
-        try:
-            muxed.append(mux_chunk(vid, aud))
-        except Exception:
-            log.exception("Mux failed for %s", vid.name)
-    return muxed
+def find_all_chunks(recorder: "SplitRecorder") -> list[Path]:
+    """Return all remaining files after stop (video + audio)."""
+    files: list[Path] = []
+    for vid, aud in recorder.find_all_pairs():
+        files.append(vid)
+        if aud:
+            files.append(aud)
+    return files
 
 
 def drain_stderr(recorder: "SplitRecorder") -> str:

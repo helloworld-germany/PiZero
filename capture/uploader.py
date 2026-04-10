@@ -34,7 +34,13 @@ def upload_recording(master_session_id: str, file_path: Path) -> dict:
 
     url = f"{config.API_BASE_URL}/api/uploadVideo"
     params = {"masterSessionId": master_session_id}
-    mime = "video/x-matroska" if file_path.suffix == ".mkv" else "video/mp4"
+    _mime_map = {
+        ".h264": "video/h264",
+        ".wav": "audio/wav",
+        ".mp4": "video/mp4",
+        ".mkv": "video/x-matroska",
+    }
+    mime = _mime_map.get(file_path.suffix, "application/octet-stream")
     filename = file_path.name
 
     log.info(

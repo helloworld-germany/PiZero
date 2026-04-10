@@ -146,7 +146,7 @@ def _cleanup_stale_chunks():
     try:
         stale = list(config.CAPTURE_DIR.glob("*_vid_*.h264")) + \
                 list(config.CAPTURE_DIR.glob("*_aud_*.wav")) + \
-                list(config.CAPTURE_DIR.glob("*_mux_*.mp4")) + \
+
                 list(config.CAPTURE_DIR.glob("*_chunk_*.mkv")) + \
                 list(config.CAPTURE_DIR.glob("*_chunk_*.mp4")) + \
                 list(config.CAPTURE_DIR.glob("chunk-*.mp4")) + \
@@ -290,7 +290,7 @@ def _run_cycle():
     upload_thread.start()
 
     # ── Split capture: video (rpicam-vid) + audio (arecord) ─────
-    recorder, prefix, ext = start_recording()
+    recorder = start_recording()
     queued = set()       # paths already sent to upload_q
     chunk_index = 0
 
@@ -349,7 +349,7 @@ def _run_cycle():
             if not _stop_event.is_set() and not _shutdown and not _halt_requested.is_set():
                 led.on()
                 time.sleep(1)  # let camera hardware fully release
-                recorder, prefix, ext = start_recording()
+                recorder = start_recording()
                 queued.clear()
 
             continue

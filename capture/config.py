@@ -42,11 +42,10 @@ QR_SCAN_FPS = int(os.environ.get("QR_SCAN_FPS", "15"))
 # Microphone type: "i2s" (default, boosted I2S), "usb", or "none"
 MIC_TYPE = os.environ.get("MIC_TYPE", "i2s").lower().strip()
 
-# Audio capture (independent arecord, muxed later via ffmpeg)
+# Audio capture (independent arecord, uploaded raw)
 AUDIO_FORMAT = os.environ.get("AUDIO_FORMAT", "S32_LE")
 AUDIO_SAMPLE_RATE = int(os.environ.get("AUDIO_SAMPLE_RATE", "48000"))
 AUDIO_CHANNELS = int(os.environ.get("AUDIO_CHANNELS", "2"))
-AUDIO_AAC_BITRATE = os.environ.get("AUDIO_AAC_BITRATE", "96k")
 
 # ---------------------------------------------------------------------------
 # Paths
