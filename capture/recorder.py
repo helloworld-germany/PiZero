@@ -328,24 +328,31 @@ def stop_recording(recorder: "SplitRecorder") -> None:
         recorder.stop()
 
 
-def find_ready_chunks(recorder: "SplitRecorder") -> list[Path]:
-    """Return completed files (video + audio) ready for upload."""
-    files: list[Path] = []
-    for vid, aud in recorder.find_ready_pairs():
-        files.append(vid)
+def find_ready_chunks(recorder: "SplitRecorder") -> list[tuple[Path, int]]:
+    """Return completed files ready for upload as ``(path, chunk_index)``.
+
+    Each pair yields up to two entries (video + audio) sharing the same
+    chunk index so the backend can match them for muxing.
+    """
+    items: list[tuple[Path, int]] = []
+    for i, (vid, aud) in enumerate(recorder.find_ready_pairs()):
+        items.append((vid, i))
         if aud:
-            files.append(aud)
-    return files
+            items.append((aud, i))
+    return items
 
 
-def find_all_chunks(recorder: "SplitRecorder") -> list[Path]:
-    """Return all remaining files after stop (video + audio)."""
-    files: list[Path] = []
-    for vid, aud in recorder.find_all_pairs():
-        files.append(vid)
+def find_all_chunks(recorder: "SplitRecorder") -> list[tuple[Path, int]]:
+    """Return all remaining files after stop as ``(path, chunk_index)``."""
+    # Offset indices so they don't collide with already-uploaded ready chunks
+    ready_count = len(recorder.find_ready_video_chunks())
+    items: list[tuple[Path, int]] = []
+    for i, (vid, aud) in enumerate(recorder.find_all_pairs()):
+        idx = ready_count + i
+        items.append((vid, idx))
         if aud:
-            files.append(aud)
-    return files
+            items.append((aud, idx))
+    return items
 
 
 def drain_stderr(recorder: "SplitRecorder") -> str:

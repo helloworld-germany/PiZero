@@ -22,9 +22,13 @@ _MAX_RETRIES = 3
 _RETRY_BACKOFF = [5, 15, 30]  # seconds between retries
 
 
-def upload_recording(master_session_id: str, file_path: Path) -> dict:
+def upload_recording(master_session_id: str, file_path: Path,
+                     chunk_index: int | None = None) -> dict:
     """
     Upload *file_path* to the vidaugment backend.
+
+    *chunk_index* ties video + audio files that belong to the same
+    time segment so the backend can mux them correctly.
 
     Retries up to _MAX_RETRIES times with exponential backoff on network
     errors or 5xx responses.  Raises on persistent failure.
@@ -41,7 +45,12 @@ def upload_recording(master_session_id: str, file_path: Path) -> dict:
         ".mkv": "video/x-matroska",
     }
     mime = _mime_map.get(file_path.suffix, "application/octet-stream")
+    media_type = "audio" if file_path.suffix == ".wav" else "video"
     filename = file_path.name
+
+    if chunk_index is not None:
+        params["chunkIndex"] = str(chunk_index)
+    params["mediaType"] = media_type
 
     log.info(
         "Uploading %s (%.1f KB) to %s  masterSessionId=%s",

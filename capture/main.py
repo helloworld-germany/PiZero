@@ -146,7 +146,6 @@ def _cleanup_stale_chunks():
     try:
         stale = list(config.CAPTURE_DIR.glob("*_vid_*.h264")) + \
                 list(config.CAPTURE_DIR.glob("*_aud_*.wav")) + \
-
                 list(config.CAPTURE_DIR.glob("*_chunk_*.mkv")) + \
                 list(config.CAPTURE_DIR.glob("*_chunk_*.mp4")) + \
                 list(config.CAPTURE_DIR.glob("chunk-*.mp4")) + \
@@ -273,7 +272,8 @@ def _run_cycle():
                     save_dir.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(output, save_dir / output.name)
                     log.info("Debug copy saved: %s", save_dir / output.name)
-                resp = upload_recording(master_session_id, output)
+                resp = upload_recording(master_session_id, output,
+                                        chunk_index=idx)
                 output.unlink(missing_ok=True)
                 action = resp.get("action", "continue") if isinstance(resp, dict) else "continue"
                 if action == "stop":
@@ -296,12 +296,13 @@ def _run_cycle():
 
     def _queue_chunks(chunks):
         nonlocal chunk_index
-        for chunk in chunks:
-            if chunk not in queued:
-                queued.add(chunk)
-                log.info("── QUEUED chunk %d for upload ──", chunk_index)
-                upload_q.put((chunk, chunk_index))
-                chunk_index += 1
+        for chunk_file, pair_idx in chunks:
+            if chunk_file not in queued:
+                queued.add(chunk_file)
+                log.info("── QUEUED chunk %d (%s) for upload ──",
+                         pair_idx, chunk_file.suffix)
+                upload_q.put((chunk_file, pair_idx))
+                chunk_index = max(chunk_index, pair_idx + 1)
 
     _audio_warned = False  # only log once per session
 
