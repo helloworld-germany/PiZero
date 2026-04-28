@@ -20,6 +20,7 @@ Benefits:
 
 import glob
 import logging
+import re
 import signal as _signal
 import subprocess
 import threading
@@ -78,9 +79,6 @@ class SplitRecorder:
         self._aud_failed = threading.Event()   # set when arecord dies
         self._aud_proc: subprocess.Popen | None = None
         self._aud_lock = threading.Lock()
-
-        # Running counter for chunk indices returned by find_ready_chunks
-        self._next_pair_index: int = 0
 
     # ── public properties ─────────────────────────────────────────
 
@@ -331,33 +329,35 @@ def stop_recording(recorder: "SplitRecorder") -> None:
         recorder.stop()
 
 
+def _parse_chunk_number(filepath: Path) -> int:
+    """Extract the %04d counter from rpicam-vid / arecord filenames."""
+    m = re.search(r'_(?:vid|aud)_(\d+)\.\w+$', filepath.name)
+    return int(m.group(1)) if m else 0
+
+
 def find_ready_chunks(recorder: "SplitRecorder") -> list[tuple[Path, int]]:
     """Return completed files ready for upload as ``(path, chunk_index)``.
 
     Each pair yields up to two entries (video + audio) sharing the same
     chunk index so the backend can match them for muxing.
 
-    Uses a running counter on the recorder so indices increase
-    monotonically across successive polls.
+    The chunk index is extracted directly from the filename written by
+    rpicam-vid / arecord (e.g. ``{prefix}_vid_0003.h264`` → index 3).
     """
-    pairs = recorder.find_ready_pairs()
     items: list[tuple[Path, int]] = []
-    for i, (vid, aud) in enumerate(pairs):
-        idx = recorder._next_pair_index + i
+    for vid, aud in recorder.find_ready_pairs():
+        idx = _parse_chunk_number(vid)
         items.append((vid, idx))
         if aud:
             items.append((aud, idx))
-    recorder._next_pair_index += len(pairs)
     return items
 
 
 def find_all_chunks(recorder: "SplitRecorder") -> list[tuple[Path, int]]:
     """Return all remaining files after stop as ``(path, chunk_index)``."""
-    # Continue from the running counter so indices don't collide with
-    # chunks already uploaded during recording.
     items: list[tuple[Path, int]] = []
-    for i, (vid, aud) in enumerate(recorder.find_all_pairs()):
-        idx = recorder._next_pair_index + i
+    for vid, aud in recorder.find_all_pairs():
+        idx = _parse_chunk_number(vid)
         items.append((vid, idx))
         if aud:
             items.append((aud, idx))
