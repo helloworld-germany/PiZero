@@ -51,6 +51,7 @@ def upload_recording(master_session_id: str, file_path: Path,
     if chunk_index is not None:
         params["chunkIndex"] = str(chunk_index)
     params["mediaType"] = media_type
+    params["source"] = "pizero"
 
     log.info(
         "Uploading %s (%.1f KB) to %s  masterSessionId=%s",
@@ -152,7 +153,10 @@ def connect_session(master_session_id: str) -> None:
 
     url = f"{config.API_BASE_URL}/api/masterSession/{master_session_id}/connect"
     try:
-        resp = requests.post(url, timeout=5)
+        resp = requests.post(url, params={
+            "deviceId": config.DEVICE_ID,
+            "source": "pizero",
+        }, timeout=5)
         if resp.ok:
             log.info("Connected to session %s", master_session_id)
         else:

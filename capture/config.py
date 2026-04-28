@@ -4,6 +4,7 @@ Configuration for the PiZero capture system.
 Settings are loaded from environment variables or capture/config.env.
 """
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -17,6 +18,24 @@ if _env_file.exists():
         key, value = key.strip(), value.strip()
         if key:
             os.environ.setdefault(key, value)
+
+# ---------------------------------------------------------------------------
+# Device
+# ---------------------------------------------------------------------------
+def _get_device_id() -> str:
+    """Stable device ID from Pi serial number."""
+    try:
+        serial = open("/proc/cpuinfo").read()
+        for line in serial.splitlines():
+            if line.startswith("Serial"):
+                sn = line.split(":")[1].strip()
+                return "pi-" + hashlib.sha256(sn.encode()).hexdigest()[:12]
+    except Exception:
+        pass
+    import uuid
+    return "pi-" + uuid.getnode().to_bytes(6, "big").hex()
+
+DEVICE_ID = _get_device_id()
 
 # ---------------------------------------------------------------------------
 # API
