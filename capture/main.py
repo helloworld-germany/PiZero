@@ -62,6 +62,7 @@ signal.signal(signal.SIGTERM, _handle_signal)
 _pause_event = threading.Event()   # set = paused
 _stop_event = threading.Event()    # set = end session
 _halt_requested = threading.Event()
+_backend_stopped = threading.Event()  # set = backend sent action=stop
 _master_session_id = None          # set during active capture cycle
 
 # LED pulse thread for pause state
@@ -223,6 +224,7 @@ def _run_cycle():
     # Reset session-scoped events
     _pause_event.clear()
     _stop_event.clear()
+    _backend_stopped.clear()
     _stop_pause_pulse()
     button.start_monitor()
 
@@ -278,6 +280,7 @@ def _run_cycle():
                 action = resp.get("action", "continue") if isinstance(resp, dict) else "continue"
                 if action == "stop":
                     log.info("Backend requested stop – ending session")
+                    _backend_stopped.set()
                     _stop_event.set()
             except Exception:
                 log.exception("Chunk %d upload failed", idx)
@@ -380,16 +383,19 @@ def _run_cycle():
         time.sleep(1)  # let error flash be visible before end-blink
 
     # ── FINISH SESSION ────────────────────────────────────────────
-    # ── FINISH SESSION (fire-and-forget, don't block return to idle) ─
-    log.info("── FINISH ──")
+    # Skip finish if the backend already stopped the session.
+    if _backend_stopped.is_set():
+        log.info("── FINISH ── skipped (backend already stopped session)")
+    else:
+        log.info("── FINISH ──")
 
-    def _finish_bg():
-        try:
-            finish_session(master_session_id)
-        except Exception:
-            log.exception("Finish-session failed (chunks were uploaded)")
+        def _finish_bg():
+            try:
+                finish_session(master_session_id)
+            except Exception:
+                log.exception("Finish-session failed (chunks were uploaded)")
 
-    threading.Thread(target=_finish_bg, daemon=True).start()
+        threading.Thread(target=_finish_bg, daemon=True).start()
 
     led.blink(2, 0.3)
     led.off()
