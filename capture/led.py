@@ -15,8 +15,10 @@ No-ops gracefully during development without hardware.
 """
 
 import logging
+import socket
 import threading
 import time
+from urllib.parse import urlparse
 
 from . import config
 
@@ -76,19 +78,48 @@ def off():
 
 
 def idle_blink():
-    """Start slow background blink (0.2s on / 1s off) for idle/scanning state."""
+    """Start slow background blink (0.2s on / 1s off) for idle/scanning state.
+
+    Periodically checks network connectivity to the API host.  When the
+    network is unreachable the normal pulse is interleaved with a triple
+    error flash so the user can tell the Pi is online vs offline.
+    Once connectivity returns the pattern reverts to a normal pulse
+    automatically.
+    """
     global _idle_thread
     _stop_idle()
     _idle_stop.clear()
 
     def _run():
+        cycles_since_check = 0  # first check after ~6 s (grace period for WiFi)
+        net_ok = True
         while not _idle_stop.is_set():
+            # Normal pulse
             _led_high()
             if _idle_stop.wait(0.2):
                 break
             _led_low()
             if _idle_stop.wait(1.0):
                 break
+
+            cycles_since_check += 1
+            # Check connectivity every ~5 pulse cycles (~6 s)
+            if cycles_since_check >= 5:
+                cycles_since_check = 0
+                net_ok = _check_network()
+
+            # If offline, interleave a triple error flash
+            if not net_ok:
+                for _ in range(3):
+                    _led_high()
+                    if _idle_stop.wait(0.08):
+                        return
+                    _led_low()
+                    if _idle_stop.wait(0.08):
+                        return
+                # Extra pause before next normal pulse
+                if _idle_stop.wait(0.6):
+                    return
 
     _idle_thread = threading.Thread(target=_run, daemon=True)
     _idle_thread.start()
@@ -161,3 +192,17 @@ def cleanup():
             _led.close()
         except Exception:
             pass
+
+
+def _check_network() -> bool:
+    """Quick connectivity test to the API host (non-blocking, ~1 s timeout)."""
+    if not config.API_BASE_URL:
+        return False
+    try:
+        parsed = urlparse(config.API_BASE_URL)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except Exception:
+        return False
