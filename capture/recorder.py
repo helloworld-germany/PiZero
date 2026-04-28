@@ -79,6 +79,9 @@ class SplitRecorder:
         self._aud_proc: subprocess.Popen | None = None
         self._aud_lock = threading.Lock()
 
+        # Running counter for chunk indices returned by find_ready_chunks
+        self._next_pair_index: int = 0
+
     # ── public properties ─────────────────────────────────────────
 
     @property
@@ -333,22 +336,28 @@ def find_ready_chunks(recorder: "SplitRecorder") -> list[tuple[Path, int]]:
 
     Each pair yields up to two entries (video + audio) sharing the same
     chunk index so the backend can match them for muxing.
+
+    Uses a running counter on the recorder so indices increase
+    monotonically across successive polls.
     """
+    pairs = recorder.find_ready_pairs()
     items: list[tuple[Path, int]] = []
-    for i, (vid, aud) in enumerate(recorder.find_ready_pairs()):
-        items.append((vid, i))
+    for i, (vid, aud) in enumerate(pairs):
+        idx = recorder._next_pair_index + i
+        items.append((vid, idx))
         if aud:
-            items.append((aud, i))
+            items.append((aud, idx))
+    recorder._next_pair_index += len(pairs)
     return items
 
 
 def find_all_chunks(recorder: "SplitRecorder") -> list[tuple[Path, int]]:
     """Return all remaining files after stop as ``(path, chunk_index)``."""
-    # Offset indices so they don't collide with already-uploaded ready chunks
-    ready_count = len(recorder.find_ready_video_chunks())
+    # Continue from the running counter so indices don't collide with
+    # chunks already uploaded during recording.
     items: list[tuple[Path, int]] = []
     for i, (vid, aud) in enumerate(recorder.find_all_pairs()):
-        idx = ready_count + i
+        idx = recorder._next_pair_index + i
         items.append((vid, idx))
         if aud:
             items.append((aud, idx))
