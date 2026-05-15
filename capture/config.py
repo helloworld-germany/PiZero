@@ -66,6 +66,14 @@ AUDIO_FORMAT = os.environ.get("AUDIO_FORMAT", "S32_LE")
 AUDIO_SAMPLE_RATE = int(os.environ.get("AUDIO_SAMPLE_RATE", "48000"))
 AUDIO_CHANNELS = int(os.environ.get("AUDIO_CHANNELS", "2"))
 
+# Audio upload preprocessing (applied only to WAV uploads)
+# LEFT_ONLY extracts channel-0 without averaging; GAIN_DB applies software gain
+# right before upload in the background uploader thread.
+AUDIO_UPLOAD_LEFT_ONLY = os.environ.get("AUDIO_UPLOAD_LEFT_ONLY", "true").lower() in (
+    "1", "true", "yes"
+)
+AUDIO_UPLOAD_GAIN_DB = float(os.environ.get("AUDIO_UPLOAD_GAIN_DB", "0"))
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------

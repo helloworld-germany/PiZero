@@ -90,6 +90,8 @@ All settings live in `capture/config.env` (or as environment variables):
 | `QR_SCAN_WIDTH` / `QR_SCAN_HEIGHT` | `480` / `480` | QR scanner resolution |
 | `QR_SCAN_FPS` | `15` | Idle scanner frame rate |
 | `MIC_TYPE` | `i2s` | Microphone: `i2s`, `usb`, or `none` |
+| `AUDIO_UPLOAD_LEFT_ONLY` | `true` | Upload only left channel for WAV audio |
+| `AUDIO_UPLOAD_GAIN_DB` | `0` | Software gain in dB applied before upload |
 | `CAPTURE_DIR` | `/run/picapture` | Capture directory (tmpfs RAM disk) |
 | `PAUSE_IDLE_TIMEOUT_S` | `60` | Auto-end session after this many seconds paused |
 | `LED_PIN` | `17` | BCM GPIO pin for status LED |
@@ -147,8 +149,17 @@ arecord -D plughw:0,0 -f S32_LE -r 48000 -c 2 -d 3 test.wav
 aplay test.wav
 ```
 
-The raw I2S audio will be quiet – this is normal. Volume normalization
-happens server-side after upload.
+If backend QA reports low level audio, boost upload gain in `capture/config.env`:
+
+```bash
+AUDIO_UPLOAD_LEFT_ONLY=true
+AUDIO_UPLOAD_GAIN_DB=28
+```
+
+This boost is applied in the uploader thread right before HTTP upload and does
+not affect real-time camera capture performance. For INMP441 wired with `L/R`
+to GND, `AUDIO_UPLOAD_LEFT_ONLY=true` ensures only the active left channel is
+uploaded.
 
 ### USB microphone (alternative)
 
