@@ -141,27 +141,105 @@ fi
 
 # ── Hardware self-test ────────────────────────────────────────────
 echo ""
+echo "  ── GPIO diagnostics snapshot ──"
+echo ""
+
+"$VENV_DIR/bin/python" - <<'PY' || true
+from capture import config, led, buzzer, button
+
+print(f"  Configured: LED_PIN={config.LED_PIN} USE_BUTTON={config.USE_BUTTON} USE_BUZZER={config.USE_BUZZER}")
+
+led.setup()
+buzzer.setup()
+button.setup()
+
+led_hw = bool(getattr(led, "_led", None))
+led_pwm = bool(getattr(led, "_supports_pwm", False))
+buzzer_ok = bool(getattr(buzzer, "_enabled", False))
+button_ok = bool(getattr(button, "_enabled", False))
+
+print(f"  LED backend: {'present' if led_hw else 'missing'} (pwm={'yes' if led_pwm else 'no'})")
+print(f"  Buzzer backend: {'present' if buzzer_ok else 'missing/disabled'}")
+print(f"  Button backend: {'present' if button_ok else 'missing/disabled'}")
+
+button.cleanup()
+led.cleanup()
+buzzer.cleanup()
+PY
+
+echo ""
 echo "  ── Hardware self-test ──"
 echo ""
 
 # LED test
 if grep -q "^LED_PIN=" "$CONFIG_FILE" 2>/dev/null; then
-    read -rp "  Test LED? (will flash 10 times) [Y/n]: " test_led
+    read -rp "  Test LED patterns? (connect/run/shutdown demo) [Y/n]: " test_led
     if [[ ! "$test_led" =~ ^[Nn]$ ]]; then
         "$VENV_DIR/bin/python" -c "
 from capture import led, config
 import time
 led.setup()
-for _ in range(10):
-    led.on(); time.sleep(0.05)
-    led.off(); time.sleep(0.05)
+led.connected_flash()
+led.run_breathe(); time.sleep(2.5)
+led.shutdown_fade()
 led.cleanup()
 " 2>/dev/null
-        read -rp "  Did you see the LED flash? [Y/n]: " led_ok
+        read -rp "  Did you see all LED patterns clearly? [Y/n]: " led_ok
         if [[ "$led_ok" =~ ^[Nn]$ ]]; then
-            echo "  ⚠ Check LED wiring (GPIO17 → 330Ω → LED → GND)"
+            echo "  ⚠ Check LED wiring (GPIO17 -> 330 ohm -> LED -> GND)"
         else
             echo "  ✓ LED OK"
+        fi
+    fi
+fi
+
+# Button test
+if grep -q "^USE_BUTTON=true" "$CONFIG_FILE" 2>/dev/null; then
+    read -rp "  Test button now? (press and release within 10s) [Y/n]: " test_button
+    if [[ ! "$test_button" =~ ^[Nn]$ ]]; then
+        echo "  Waiting for button press on GPIO3 …"
+        if timeout 12 "$VENV_DIR/bin/python" - <<'PY' 2>/dev/null
+import time
+from capture import button
+
+button.setup()
+if not getattr(button, "_enabled", False):
+    raise SystemExit(2)
+
+deadline = time.monotonic() + 10.0
+pressed = False
+while time.monotonic() < deadline:
+    if button._is_pressed():
+        pressed = True
+        break
+    time.sleep(0.02)
+
+if not pressed:
+    button.cleanup()
+    raise SystemExit(1)
+
+# confirm release too, so stuck-low wiring is detected
+release_deadline = time.monotonic() + 2.0
+while button._is_pressed() and time.monotonic() < release_deadline:
+    time.sleep(0.02)
+
+still_pressed = button._is_pressed()
+button.cleanup()
+raise SystemExit(3 if still_pressed else 0)
+PY
+        then
+            echo "  ✓ Button press detected (press + release OK)"
+        else
+            rc=$?
+            if [[ "$rc" == "1" || "$rc" == "124" ]]; then
+                echo "  ⚠ No button press detected in time – check GPIO3 wiring"
+            elif [[ "$rc" == "2" ]]; then
+                echo "  ⚠ Button backend unavailable – GPIO access failed"
+            elif [[ "$rc" == "3" ]]; then
+                echo "  ⚠ Button appears stuck pressed – check pull-up / wiring"
+            else
+                echo "  ⚠ Button test failed (exit=$rc)"
+            fi
         fi
     fi
 fi
@@ -270,24 +348,70 @@ else
     echo "  Volume normalization happens server-side after upload."
 fi
 
+# ── Backend connectivity check ────────────────────────────────────
+echo ""
+echo "[4/6] Checking backend connectivity …"
+"$VENV_DIR/bin/python" - <<'PY' || true
+import socket
+from urllib.parse import urlparse
+
+import requests
+
+from capture import config
+
+base = config.API_BASE_URL.strip()
+if not base:
+    print("  ⚠ VIDAUGMENT_API_BASE_URL is not configured")
+    raise SystemExit(0)
+
+try:
+    parsed = urlparse(base)
+    host = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    with socket.create_connection((host, port), timeout=3):
+        print(f"  ✓ Network reachability OK ({host}:{port})")
+except Exception as exc:
+    print(f"  ⚠ Network reachability failed: {exc}")
+    raise SystemExit(0)
+
+endpoint = f"{base}/api/uploadVideo"
+try:
+    resp = requests.get(endpoint, timeout=5)
+    code = resp.status_code
+    if code < 500:
+        print(f"  ✓ Backend HTTP reachable: GET /api/uploadVideo -> {code}")
+    else:
+        print(f"  ⚠ Backend reachable but returned server error: {code}")
+except Exception as exc:
+    print(f"  ⚠ Backend HTTP check failed: {exc}")
+PY
+
 # ── Camera check ──────────────────────────────────────────────────
 echo ""
-echo "[4/5] Checking camera …"
-if command -v rpicam-hello >/dev/null 2>&1; then
-    echo "  Running quick camera test (2s) …"
-    if timeout 3 rpicam-hello -t 2000 --nopreview 2>/dev/null; then
-        echo "  ✓ Camera OK"
+echo "[5/6] Checking camera …"
+if command -v rpicam-still >/dev/null 2>&1; then
+    echo "  Capturing test frame (camera pipeline + sensor) …"
+    TEST_JPG="/tmp/picapture-cam-test.jpg"
+    rm -f "$TEST_JPG"
+    if timeout 5 rpicam-still -n -t 1500 -o "$TEST_JPG" 2>/dev/null; then
+        jpg_size=$(stat -c%s "$TEST_JPG" 2>/dev/null || echo 0)
+        if [[ "$jpg_size" -gt 10240 ]]; then
+            echo "  ✓ Camera OK – captured test image ($(( jpg_size / 1024 )) KB)"
+        else
+            echo "  ⚠ Camera capture produced tiny file (${jpg_size} bytes)"
+        fi
     else
         echo "  ⚠ Camera test failed – this is normal if the capture"
         echo "    service is currently running (camera busy)."
         echo "    If this is a fresh install, check the ribbon cable."
     fi
+    rm -f "$TEST_JPG"
 else
-    echo "  ⚠ rpicam-hello not found – is rpicam-apps installed?"
+    echo "  ⚠ rpicam-still not found – is rpicam-apps installed?"
 fi
 
 # ── Audio check ───────────────────────────────────────────────────
-echo "[5/5] Checking audio devices …"
+echo "[6/6] Checking audio devices …"
 arecord -l 2>/dev/null || echo "  ⚠ No capture devices found – plug in a USB microphone"
 
 # ── RAM disk for capture directory ─────────────────────────────────

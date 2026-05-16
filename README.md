@@ -68,6 +68,9 @@ cd PiZero
 # 2. Run setup (will prompt for sudo where needed)
 ./setup.sh
 
+# setup includes hardware + chain validation prompts:
+# LED/buzzer/button checks, backend reachability, camera capture test, mic test
+
 # 3. Reboot if prompted (needed for I2S audio / tmpfs)
 #    After reboot the system is ready to run.
 

@@ -3,13 +3,13 @@
 PiZero Capture – main entry point.
 
 State machine:
-    State 1 – IDLE:     QR scan (low-res, low-fps). LED off.
+    State 1 – IDLE:     QR scan (low-res, low-fps). LED idle breathing.
     State 2 – TRIGGER:  QR detected → buzzer 1×, LED on, start capture.
-    State 3 – CAPTURE:  30s chunks, each uploaded immediately.
+    State 3 – CAPTURE:  chunked recording with run breathing LED.
                          Backend may respond {"action":"stop"} → end session.
     State 4 – BUTTON:   Short press  → pause/resume (LED pulse, buzzer 2×)
                          Long press   → end session (upload last chunk, LED off)
-                         Very long    → sudo halt (descending chord, LED off)
+                         Very long    → sudo halt (descending chord, LED fade)
     State 5 – TIMEOUT:  Hard timeout at 30 min. Smart stop via backend.
 
 Usage:
@@ -108,13 +108,14 @@ def _on_short_press():
         _pause_event.clear()
         _stop_pause_pulse()
         buzzer.beep()
-        led.on()
+        led.run_breathe()
         if _master_session_id:
             threading.Thread(target=notify_pause, args=(_master_session_id, False), daemon=True).start()
     else:
         log.info("Button: PAUSE")
         _pause_event.set()
         buzzer.beep()
+        led.off()
         _start_pause_pulse()
         if _master_session_id:
             threading.Thread(target=notify_pause, args=(_master_session_id, True), daemon=True).start()
@@ -133,7 +134,7 @@ def _on_long_press():
 def _on_vlong_press():
     """Request safe shutdown (sudo halt)."""
     log.info("Button: SHUTDOWN requested")
-    led.off()
+    led.shutdown_fade()
     _halt_requested.set()
     _stop_event.set()
     _pause_event.clear()
@@ -248,7 +249,7 @@ def _run_cycle():
     # ── STATE 3: CHUNKED CAPTURE + UPLOAD ─────────────────────────
     log.info("── CAPTURE ── chunked recording (chunk=%ds, hard_timeout=%ds)",
              config.RECORD_DURATION_S, config.HARD_TIMEOUT_S)
-    led.on()
+    led.run_breathe()
 
     session_start = time.monotonic()
     chunk_index = 0
@@ -351,7 +352,7 @@ def _run_cycle():
 
             # Resume with a fresh recorder
             if not _stop_event.is_set() and not _shutdown and not _halt_requested.is_set():
-                led.on()
+                led.run_breathe()
                 time.sleep(1)  # let camera hardware fully release
                 recorder = start_recording()
                 queued.clear()

@@ -121,6 +121,7 @@ def _is_pressed() -> bool:
 def _poll_loop():
     """Poll the button and classify press duration."""
     from . import buzzer as _buzzer
+    from . import led as _led
 
     while not _monitor_stop.is_set():
         if not _is_pressed():
@@ -139,12 +140,14 @@ def _poll_loop():
             if not long_signalled and held >= LONG_PRESS_S:
                 long_signalled = True
                 _buzzer.beep(0.1)
+                _led.long_press_confirm()
                 log.debug("Button: long-press threshold reached")
 
             # Feedback at very-long-press threshold (8s) – chord signals halt is committed
             if not vlong_signalled and held >= VLONG_PRESS_S:
                 vlong_signalled = True
                 _buzzer.chord_down()
+                _led.very_long_press_confirm()
                 log.debug("Button: very-long-press threshold reached")
 
             _monitor_stop.wait(_DEBOUNCE_S)
